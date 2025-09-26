@@ -542,6 +542,9 @@
                     // Initialize object detection for baseball
                     await this.initializeObjectDetection();
                     
+                    // Start pose detection loop
+                    this.startPoseDetection();
+                    
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('calibrateBtn').disabled = false;
                     this.updateStatus('Camera started! Position player in frame for calibration.');
@@ -570,6 +573,16 @@
                 });
                 
                 this.pose.onResults((results) => this.processPoseResults(results));
+            }
+            
+            startPoseDetection() {
+                const detectPose = () => {
+                    if (this.video.readyState === 4) {
+                        this.pose.send({ image: this.video });
+                    }
+                    requestAnimationFrame(detectPose);
+                };
+                detectPose();
             }
             
             async initializeObjectDetection() {
@@ -632,6 +645,9 @@
                     // Draw pose connections
                     this.drawConnections(results.poseLandmarks, POSE_CONNECTIONS, '#00FF00');
                     
+                    // Draw individual landmarks
+                    this.drawLandmarks(results.poseLandmarks);
+                    
                     // Draw strike zone if calibrated
                     if (this.isCalibrated && this.strikeZone) {
                         this.drawStrikeZone();
@@ -640,6 +656,19 @@
                 
                 // Detect and track baseball
                 this.detectBaseball();
+            }
+            
+            drawLandmarks(landmarks) {
+                this.ctx.fillStyle = '#FF0000';
+                landmarks.forEach((landmark, index) => {
+                    if (landmark) {
+                        const x = landmark.x * this.canvas.width;
+                        const y = landmark.y * this.canvas.height;
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                        this.ctx.fill();
+                    }
+                });
             }
             
             drawConnections(landmarks, connections, color) {
@@ -893,3 +922,4 @@
     </script>
 </body>
 </html>
+
