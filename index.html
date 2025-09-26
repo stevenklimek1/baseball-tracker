@@ -430,6 +430,14 @@
                     <div class="stat-number" id="strikePercentage">0%</div>
                     <div class="stat-label">Strike %</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="currentDepth">0ft</div>
+                    <div class="stat-label">Current Depth</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="avgDepth">0ft</div>
+                    <div class="stat-label">Avg Distance</div>
+                </div>
             </div>
             
             <div class="zone-stats">
@@ -489,7 +497,9 @@
                     balls: 0,
                     zone60to90: { total: 0, inZone: 0 },
                     zone90to120: { total: 0, inZone: 0 },
-                    zone120Plus: { total: 0, inZone: 0 }
+                    zone120Plus: { total: 0, inZone: 0 },
+                    depths: [], // Store all depth measurements
+                    currentDepth: 0
                 };
                 
                 // Calibration
@@ -763,10 +773,86 @@
             }
             
             estimateDistanceZone(ballSize) {
-                // Estimate distance based on ball size (larger = closer)
-                if (ballSize > 100) return 'zone60to90';
-                if (ballSize > 50) return 'zone90to120';
+                // Enhanced 3D depth estimation using multiple methods
+                const depth = this.calculate3DDepth(ballSize);
+                
+                if (depth < 90) return 'zone60to90';
+                if (depth < 120) return 'zone90to120';
                 return 'zone120Plus';
+            }
+            
+            calculate3DDepth(ballSize) {
+                // Method 1: Ball size-based estimation
+                const sizeBasedDepth = this.estimateDepthFromSize(ballSize);
+                
+                // Method 2: Parallax-based estimation (if we have multiple frames)
+                const parallaxDepth = this.estimateDepthFromParallax();
+                
+                // Method 3: Pose-based depth estimation
+                const poseDepth = this.estimateDepthFromPose();
+                
+                // Combine methods for more accurate depth
+                const weights = [0.4, 0.3, 0.3]; // Weight each method
+                const combinedDepth = (sizeBasedDepth * weights[0] + 
+                                     parallaxDepth * weights[1] + 
+                                     poseDepth * weights[2]);
+                
+                return Math.round(combinedDepth);
+            }
+            
+            estimateDepthFromSize(ballSize) {
+                // Real baseball is ~2.9 inches diameter
+                // Camera field of view and sensor size affect this
+                const realBallSize = 2.9; // inches
+                const cameraFOV = 60; // degrees (typical phone camera)
+                const sensorWidth = 4.8; // mm (typical phone sensor)
+                
+                // Convert ball size to real-world distance
+                const ballSizeInches = (ballSize / this.canvas.width) * (sensorWidth / Math.tan(cameraFOV * Math.PI / 360));
+                const depth = (realBallSize * this.canvas.width) / (ballSize * Math.tan(cameraFOV * Math.PI / 360));
+                
+                return Math.max(60, Math.min(200, depth)); // Clamp between 60-200 feet
+            }
+            
+            estimateDepthFromParallax() {
+                // Use frame-to-frame movement to estimate depth
+                if (!this.lastBallPosition) {
+                    this.lastBallPosition = { x: 0, y: 0, time: 0 };
+                    return 100; // Default depth
+                }
+                
+                const currentTime = Date.now();
+                const timeDiff = currentTime - this.lastBallPosition.time;
+                
+                if (timeDiff < 100) return 100; // Too soon for parallax
+                
+                // Calculate movement speed
+                const movement = Math.sqrt(
+                    Math.pow(this.currentBallPosition.x - this.lastBallPosition.x, 2) +
+                    Math.pow(this.currentBallPosition.y - this.lastBallPosition.y, 2)
+                );
+                
+                // Faster movement = closer object
+                const depth = Math.max(60, 200 - (movement * 2));
+                
+                this.lastBallPosition = { ...this.currentBallPosition, time: currentTime };
+                return depth;
+            }
+            
+            estimateDepthFromPose() {
+                // Use body proportions to estimate depth
+                if (!this.strikeZone) return 100;
+                
+                // Calculate body height in pixels
+                const bodyHeight = this.strikeZone.height * this.canvas.height;
+                
+                // Average human torso height is ~18 inches
+                const realTorsoHeight = 18; // inches
+                
+                // Estimate depth based on body size
+                const depth = (realTorsoHeight * this.canvas.height) / (bodyHeight * 0.1);
+                
+                return Math.max(60, Math.min(200, depth));
             }
             
             updateStatistics(isInStrikeZone, distanceZone) {
@@ -784,6 +870,12 @@
                     this.stats[distanceZone].inZone++;
                 }
                 
+                // Update depth statistics
+                const ballSize = Math.max(this.currentBallSize || 50, 50);
+                const depth = this.calculate3DDepth(ballSize);
+                this.stats.currentDepth = depth;
+                this.stats.depths.push(depth);
+                
                 this.updateUI();
             }
             
@@ -794,6 +886,27 @@
                 this.ctx.fill();
                 this.ctx.strokeStyle = '#FFFFFF';
                 this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+                
+                // Draw 3D depth information
+                this.draw3DDepthInfo(center);
+            }
+            
+            draw3DDepthInfo(center) {
+                const ballSize = Math.max(this.currentBallSize || 50, 50);
+                const depth = this.calculate3DDepth(ballSize);
+                
+                // Draw depth text
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '14px Arial';
+                this.ctx.fillText(`${depth}ft`, center.x + 15, center.y - 15);
+                
+                // Draw depth indicator line
+                this.ctx.strokeStyle = '#FFFF00';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.moveTo(center.x, center.y);
+                this.ctx.lineTo(center.x + 20, center.y - 20);
                 this.ctx.stroke();
             }
             
@@ -806,6 +919,13 @@
                 const strikePercentage = this.stats.totalThrows > 0 ? 
                     (this.stats.strikes / this.stats.totalThrows * 100).toFixed(1) : 0;
                 document.getElementById('strikePercentage').textContent = strikePercentage + '%';
+                
+                // Update 3D depth statistics
+                document.getElementById('currentDepth').textContent = this.stats.currentDepth + 'ft';
+                
+                const avgDepth = this.stats.depths.length > 0 ? 
+                    (this.stats.depths.reduce((a, b) => a + b, 0) / this.stats.depths.length).toFixed(0) : 0;
+                document.getElementById('avgDepth').textContent = avgDepth + 'ft';
                 
                 // Update zone statistics
                 this.updateZoneStats('zone60to90', '60-90 Feet');
@@ -892,7 +1012,9 @@
                     balls: 0,
                     zone60to90: { total: 0, inZone: 0 },
                     zone90to120: { total: 0, inZone: 0 },
-                    zone120Plus: { total: 0, inZone: 0 }
+                    zone120Plus: { total: 0, inZone: 0 },
+                    depths: [],
+                    currentDepth: 0
                 };
                 
                 this.sessionStart = null;
