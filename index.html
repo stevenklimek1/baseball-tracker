@@ -1,4 +1,4 @@
-tml>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -7,8 +7,9 @@ tml>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@latest/dist/posenet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@latest/dist/coco-ssd.min.js"></script>
     <style>
         body {
@@ -397,6 +398,10 @@ tml>
                 <strong>Status:</strong> Click "Start Camera" to begin
             </div>
             
+            <div class="status" id="poseDetectionStatus" style="display: none;">
+                <strong>Pose Detection:</strong> <span id="poseMethod">Initializing...</span>
+            </div>
+            
             <div class="instructions" id="instructions">
                 <strong>Instructions:</strong> 
                 <ol>
@@ -519,8 +524,12 @@ tml>
                     rightHip: null
                 };
                 this.strikeZone = null;
+                this.followPlayer = false;
                 this.pose = null;
+                this.holistic = null;
+                this.posenet = null;
                 this.model = null;
+                this.poseDetectionMethod = 'holistic'; // 'holistic', 'posenet', or 'mediapipe'
                 
                 // Session tracking
                 this.sessionStart = null;
@@ -553,6 +562,7 @@ tml>
             
             async startCamera() {
                 try {
+                    console.log('Starting camera...');
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         video: { 
                             width: 1280, 
@@ -561,17 +571,23 @@ tml>
                         } 
                     });
                     
+                    console.log('Camera stream obtained');
                     this.video.srcObject = stream;
                     this.video.onloadedmetadata = () => {
                         this.canvas.width = this.video.videoWidth;
                         this.canvas.height = this.video.videoHeight;
+                        console.log('Video metadata loaded');
                     };
                     
                     // Initialize pose detection
+                    console.log('Initializing pose detection...');
                     await this.initializePoseDetection();
+                    console.log('Pose detection initialized');
                     
                     // Initialize object detection for baseball
+                    console.log('Initializing object detection...');
                     await this.initializeObjectDetection();
+                    console.log('Object detection initialized');
                     
                     // Start pose detection loop
                     this.startPoseDetection();
@@ -587,48 +603,203 @@ tml>
             }
             
             async initializePoseDetection() {
-                // Initialize MediaPipe Pose
-                this.pose = new Pose({
-                    locateFile: (file) => {
-                        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                try {
+                    // Try MediaPipe Holistic first (most accurate)
+                    if (typeof Holistic !== 'undefined') {
+                        console.log('Initializing MediaPipe Holistic...');
+                        this.holistic = new Holistic({
+                            locateFile: (file) => {
+                                return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
+                            }
+                        });
+                        
+                        this.holistic.setOptions({
+                            modelComplexity: 1,
+                            smoothLandmarks: true,
+                            enableSegmentation: false,
+                            smoothSegmentation: false,
+                            refineFaceLandmarks: true,
+                            minDetectionConfidence: 0.5,
+                            minTrackingConfidence: 0.5
+                        });
+                        
+                        this.holistic.onResults((results) => this.processHolisticResults(results));
+                        this.poseDetectionMethod = 'holistic';
+                        this.updatePoseDetectionStatus('MediaPipe Holistic (Most Accurate)');
+                        console.log('MediaPipe Holistic initialized successfully');
+                        return;
                     }
-                });
-                
-                this.pose.setOptions({
-                    modelComplexity: 1,
-                    smoothLandmarks: true,
-                    enableSegmentation: false,
-                    smoothSegmentation: false,
-                    minDetectionConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
-                
-                this.pose.onResults((results) => this.processPoseResults(results));
+                    
+                    // Fallback to PoseNet (TensorFlow.js)
+                    if (typeof posenet !== 'undefined') {
+                        console.log('Initializing PoseNet...');
+                        this.posenet = await posenet.load({
+                            architecture: 'MobileNetV1',
+                            outputStride: 16,
+                            inputResolution: { width: 640, height: 480 },
+                            multiplier: 0.75
+                        });
+                        this.poseDetectionMethod = 'posenet';
+                        this.updatePoseDetectionStatus('PoseNet (TensorFlow.js)');
+                        console.log('PoseNet initialized successfully');
+                        return;
+                    }
+                    
+                    // Fallback to MediaPipe Pose
+                    if (typeof Pose !== 'undefined') {
+                        console.log('Initializing MediaPipe Pose...');
+                        this.pose = new Pose({
+                            locateFile: (file) => {
+                                return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                            }
+                        });
+                        
+                        this.pose.setOptions({
+                            modelComplexity: 1,
+                            smoothLandmarks: true,
+                            enableSegmentation: false,
+                            smoothSegmentation: false,
+                            minDetectionConfidence: 0.5,
+                            minTrackingConfidence: 0.5
+                        });
+                        
+                        this.pose.onResults((results) => this.processPoseResults(results));
+                        this.poseDetectionMethod = 'mediapipe';
+                        this.updatePoseDetectionStatus('MediaPipe Pose (Fallback)');
+                        console.log('MediaPipe Pose initialized successfully');
+                        return;
+                    }
+                    
+                    throw new Error('No pose detection libraries available');
+                } catch (error) {
+                    console.error('Error initializing pose detection:', error);
+                    throw error;
+                }
             }
             
             startPoseDetection() {
                 const detectPose = () => {
                     if (this.video.readyState === 4) {
-                        this.pose.send({ image: this.video });
+                        if (this.poseDetectionMethod === 'holistic' && this.holistic) {
+                            this.holistic.send({ image: this.video });
+                        } else if (this.poseDetectionMethod === 'posenet' && this.posenet) {
+                            this.detectPoseWithPoseNet();
+                        } else if (this.poseDetectionMethod === 'mediapipe' && this.pose) {
+                            this.pose.send({ image: this.video });
+                        }
                     }
                     requestAnimationFrame(detectPose);
                 };
                 detectPose();
             }
             
-            async initializeObjectDetection() {
-                // Initialize COCO-SSD for object detection (including sports balls)
-                this.model = await cocoSsd.load();
+            async detectPoseWithPoseNet() {
+                try {
+                    const pose = await this.posenet.estimateSinglePose(this.video, {
+                        flipHorizontal: false,
+                        decodingMethod: 'single-person'
+                    });
+                    this.processPoseNetResults(pose);
+                } catch (error) {
+                    console.error('PoseNet detection error:', error);
+                }
             }
             
+            async initializeObjectDetection() {
+                try {
+                    // Check if cocoSsd is available
+                    if (typeof cocoSsd === 'undefined') {
+                        throw new Error('COCO-SSD library not loaded');
+                    }
+                    
+                    // Initialize COCO-SSD for object detection (including sports balls)
+                    this.model = await cocoSsd.load();
+                } catch (error) {
+                    console.error('Error initializing object detection:', error);
+                    throw error;
+                }
+            }
+            
+            // Process MediaPipe Holistic results (most accurate)
+            processHolisticResults(results) {
+                if (results.poseLandmarks) {
+                    // Only calibrate when user clicks the calibrate button
+                    if (this.calibrationInProgress) {
+                        this.calibrateFromPose(results.poseLandmarks);
+                    }
+                    
+                    // If following player after calibration, keep zone attached to joints
+                    if (this.isCalibrated && this.followPlayer) {
+                        this.updateStrikeZoneFromPose(results.poseLandmarks);
+                    }
+                }
+                
+                // Draw pose landmarks
+                this.drawHolisticLandmarks(results);
+            }
+            
+            // Process MediaPipe Pose results (fallback)
             async processPoseResults(results) {
                 // Only calibrate when user clicks the calibrate button
                 if (this.calibrationInProgress && results.poseLandmarks) {
                     this.calibrateFromPose(results.poseLandmarks);
                 }
                 
+                // If following player after calibration, keep zone attached to joints
+                if (this.isCalibrated && this.followPlayer && results.poseLandmarks) {
+                    this.updateStrikeZoneFromPose(results.poseLandmarks);
+                }
+                
                 // Draw pose landmarks
                 this.drawPoseLandmarks(results);
+            }
+            
+            // Process PoseNet results (TensorFlow.js fallback)
+            processPoseNetResults(pose) {
+                if (pose && pose.keypoints) {
+                    // Convert PoseNet keypoints to MediaPipe format
+                    const landmarks = this.convertPoseNetToMediaPipe(pose.keypoints);
+                    
+                    // Only calibrate when user clicks the calibrate button
+                    if (this.calibrationInProgress) {
+                        this.calibrateFromPose(landmarks);
+                    }
+                    
+                    // If following player after calibration, keep zone attached to joints
+                    if (this.isCalibrated && this.followPlayer) {
+                        this.updateStrikeZoneFromPose(landmarks);
+                    }
+                    
+                    // Draw pose landmarks
+                    this.drawPoseNetLandmarks(pose.keypoints);
+                }
+            }
+            
+            // Convert PoseNet keypoints to MediaPipe landmark format
+            convertPoseNetToMediaPipe(keypoints) {
+                const landmarks = new Array(33).fill(null);
+                
+                // Map PoseNet keypoints to MediaPipe indices
+                const keypointMap = {
+                    5: 11,  // left shoulder
+                    6: 12,  // right shoulder
+                    11: 23, // left hip
+                    12: 24  // right hip
+                };
+                
+                keypoints.forEach(keypoint => {
+                    const mediaPipeIndex = keypointMap[keypoint.part];
+                    if (mediaPipeIndex !== undefined && keypoint.score > 0.3) {
+                        landmarks[mediaPipeIndex] = {
+                            x: keypoint.position.x / this.canvas.width,
+                            y: keypoint.position.y / this.canvas.height,
+                            z: 0,
+                            visibility: keypoint.score
+                        };
+                    }
+                });
+                
+                return landmarks;
             }
             
             calibrateFromPose(landmarks) {
@@ -671,6 +842,7 @@ tml>
                             };
                             
                             this.isCalibrated = true;
+                            this.followPlayer = true;
                             this.calibrationInProgress = false;
                             this.updateStatus('Strike zone calibrated! Ready to track throws.');
                             document.getElementById('calibrationStatus').style.display = 'block';
@@ -688,6 +860,33 @@ tml>
                 }
             }
             
+            // Draw MediaPipe Holistic landmarks (most accurate)
+            drawHolisticLandmarks(results) {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                if (results.poseLandmarks) {
+                    // Draw pose connections
+                    this.drawConnections(results.poseLandmarks, POSE_CONNECTIONS, '#00FF00');
+                    
+                    // Draw individual landmarks with higher visibility
+                    this.drawLandmarks(results.poseLandmarks, '#FF0000', 4);
+                }
+                
+                // Draw manually selected joints if in calibration mode
+                if (this.manualCalibrationMode) {
+                    this.drawSelectedJoints();
+                }
+                
+                // Draw strike zone if calibrated
+                if (this.isCalibrated && this.strikeZone) {
+                    this.drawStrikeZone();
+                }
+                
+                // Detect and track baseball
+                this.detectBaseball();
+            }
+            
+            // Draw MediaPipe Pose landmarks (fallback)
             drawPoseLandmarks(results) {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 
@@ -698,6 +897,37 @@ tml>
                     // Draw individual landmarks
                     this.drawLandmarks(results.poseLandmarks);
                 }
+                
+                // Draw manually selected joints if in calibration mode
+                if (this.manualCalibrationMode) {
+                    this.drawSelectedJoints();
+                }
+                
+                // Draw strike zone if calibrated
+                if (this.isCalibrated && this.strikeZone) {
+                    this.drawStrikeZone();
+                }
+                
+                // Detect and track baseball
+                this.detectBaseball();
+            }
+            
+            // Draw PoseNet landmarks (TensorFlow.js fallback)
+            drawPoseNetLandmarks(keypoints) {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw keypoints
+                keypoints.forEach(keypoint => {
+                    if (keypoint.score > 0.3) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(keypoint.position.x, keypoint.position.y, 4, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = '#FF0000';
+                        this.ctx.fill();
+                        this.ctx.strokeStyle = '#FFFFFF';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                    }
+                });
                 
                 // Draw manually selected joints if in calibration mode
                 if (this.manualCalibrationMode) {
@@ -802,15 +1032,20 @@ tml>
                 this.ctx.fillText('PREVIEW STRIKE ZONE', x, y - 10);
             }
             
-            drawLandmarks(landmarks) {
-                this.ctx.fillStyle = '#FF0000';
+            drawLandmarks(landmarks, color = '#FF0000', radius = 3) {
+                this.ctx.fillStyle = color;
                 landmarks.forEach((landmark, index) => {
-                    if (landmark) {
+                    if (landmark && landmark.visibility > 0.3) {
                         const x = landmark.x * this.canvas.width;
                         const y = landmark.y * this.canvas.height;
                         this.ctx.beginPath();
-                        this.ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                        this.ctx.arc(x, y, radius, 0, 2 * Math.PI);
                         this.ctx.fill();
+                        
+                        // Add white border for better visibility
+                        this.ctx.strokeStyle = '#FFFFFF';
+                        this.ctx.lineWidth = 1;
+                        this.ctx.stroke();
                     }
                 });
             }
@@ -1269,10 +1504,56 @@ tml>
                 
                 this.isCalibrated = true;
                 this.manualCalibrationMode = false;
+                this.followPlayer = true;
                 this.updateStatus('Strike zone locked! Ready to track throws.');
                 document.getElementById('calibrationStatus').style.display = 'block';
                 document.getElementById('calibrationText').textContent = 'Strike zone calibrated successfully';
                 document.getElementById('lockCalibrationBtn').disabled = true;
+            }
+
+            // Keep strike zone attached to player's joints (with smoothing)
+            updateStrikeZoneFromPose(landmarks) {
+                const leftShoulder = landmarks[11];
+                const rightShoulder = landmarks[12];
+                const leftHip = landmarks[23];
+                const rightHip = landmarks[24];
+                if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) return;
+                
+                const shoulderCenter = {
+                    x: (leftShoulder.x + rightShoulder.x) / 2,
+                    y: (leftShoulder.y + rightShoulder.y) / 2
+                };
+                const hipCenter = {
+                    x: (leftHip.x + rightHip.x) / 2,
+                    y: (leftHip.y + rightHip.y) / 2
+                };
+                const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+                const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
+                if (shoulderWidth <= 0 || bodyHeight <= 0) return;
+                
+                const targetZone = {
+                    center: {
+                        x: (shoulderCenter.x + hipCenter.x) / 2,
+                        y: (shoulderCenter.y + hipCenter.y) / 2
+                    },
+                    width: Math.min(0.15, Math.max(0.05, shoulderWidth * 1.2)),
+                    height: Math.max(0.1, bodyHeight * 0.65)
+                };
+                
+                // Smoothly blend from current to target to avoid jitter
+                const alpha = 0.2; // smoothing factor
+                if (!this.strikeZone) {
+                    this.strikeZone = targetZone;
+                    return;
+                }
+                this.strikeZone = {
+                    center: {
+                        x: this.strikeZone.center.x * (1 - alpha) + targetZone.center.x * alpha,
+                        y: this.strikeZone.center.y * (1 - alpha) + targetZone.center.y * alpha
+                    },
+                    width: this.strikeZone.width * (1 - alpha) + targetZone.width * alpha,
+                    height: this.strikeZone.height * (1 - alpha) + targetZone.height * alpha
+                };
             }
             
             resetStatistics() {
@@ -1286,3 +1567,48 @@ tml>
                     depths: [],
                     currentDepth: 0
                 };
+                
+                this.isCalibrated = false;
+                this.calibrationInProgress = false;
+                this.manualCalibrationMode = false;
+                this.selectedJoints = {
+                    leftShoulder: null,
+                    rightShoulder: null,
+                    leftHip: null,
+                    rightHip: null
+                };
+                this.strikeZone = null;
+                this.sessionStart = null;
+                document.getElementById('lockCalibrationBtn').disabled = true;
+                this.updateUI();
+                this.updateStatus('Statistics reset. Ready for new session.');
+            }
+            
+            updateStatus(message) {
+                document.getElementById('status').innerHTML = `<strong>Status:</strong> ${message}`;
+            }
+            
+            updatePoseDetectionStatus(method) {
+                document.getElementById('poseMethod').textContent = method;
+                document.getElementById('poseDetectionStatus').style.display = 'block';
+            }
+        }
+        
+        // Initialize the tracker when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new BaseballTrackerWeb();
+        });
+        
+        // POSE_CONNECTIONS for MediaPipe
+        const POSE_CONNECTIONS = [
+            [11, 12], [11, 13], [11, 23], [12, 14], [12, 24],
+            [13, 15], [14, 16], [15, 17], [16, 18], [15, 19],
+            [16, 20], [15, 21], [16, 22], [11, 23], [12, 24],
+            [23, 24], [23, 25], [24, 26], [25, 27], [26, 28],
+            [27, 29], [28, 30], [29, 31], [30, 32], [27, 31],
+            [28, 32]
+        ];
+    </script>
+</body>
+</html>
+
