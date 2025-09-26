@@ -402,6 +402,24 @@
                 <strong>Pose Detection:</strong> <span id="poseMethod">Initializing...</span>
             </div>
             
+            <div class="status" id="trackingQualityStatus" style="display: none;">
+                <strong>Tracking Quality:</strong> <span id="trackingQuality">Good</span>
+                <div style="margin-top: 5px;">
+                    <div style="background: rgba(0,0,0,0.3); height: 8px; border-radius: 4px; overflow: hidden;">
+                        <div id="trackingQualityBar" style="height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); width: 85%; transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="status" id="fpsStatus" style="display: none;">
+                <strong>Performance:</strong> <span id="fpsDisplay">60 FPS</span>
+                <div style="margin-top: 5px;">
+                    <div style="background: rgba(0,0,0,0.3); height: 8px; border-radius: 4px; overflow: hidden;">
+                        <div id="fpsBar" style="height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); width: 100%; transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="instructions" id="instructions">
                 <strong>Instructions:</strong> 
                 <ol>
@@ -531,6 +549,29 @@
                 this.model = null;
                 this.poseDetectionMethod = 'holistic'; // 'holistic', 'posenet', or 'mediapipe'
                 
+                // Advanced tracking accuracy improvements (optimized for 60 FPS)
+                this.landmarkHistory = []; // Store last 5 frames for smoothing (reduced for speed)
+                this.maxHistoryFrames = 5; // Reduced from 10 to 5 for 60 FPS
+                this.confidenceThreshold = 0.7; // Higher confidence requirement
+                this.smoothingFactor = 0.3; // Temporal smoothing
+                this.jointValidationFrames = 2; // Reduced from 3 to 2 for 60 FPS
+                this.jointValidationHistory = {
+                    leftShoulder: [],
+                    rightShoulder: [],
+                    leftHip: [],
+                    rightHip: []
+                };
+                
+                // 60 FPS optimization
+                this.targetFPS = 60;
+                this.frameTime = 1000 / this.targetFPS; // 16.67ms per frame
+                this.lastFrameTime = 0;
+                this.frameCount = 0;
+                this.fpsCounter = 0;
+                this.fpsUpdateInterval = 1000; // Update FPS display every second
+                this.lastFpsUpdate = 0;
+                this.isProcessing = false; // Prevent overlapping processing
+                
                 // Session tracking
                 this.sessionStart = null;
                 this.lastThrowTime = 0;
@@ -565,8 +606,9 @@
                     console.log('Starting camera...');
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         video: { 
-                            width: 1280, 
-                            height: 720,
+                            width: 640, 
+                            height: 480,
+                            frameRate: { ideal: 60, max: 60 }, // Target 60 FPS
                             facingMode: 'environment' // Use back camera if available
                         } 
                     });
@@ -614,11 +656,11 @@
                         });
                         
                         this.holistic.setOptions({
-                            modelComplexity: 1,
+                            modelComplexity: 0, // Reduced for 60 FPS
                             smoothLandmarks: true,
                             enableSegmentation: false,
                             smoothSegmentation: false,
-                            refineFaceLandmarks: true,
+                            refineFaceLandmarks: false, // Disabled for speed
                             minDetectionConfidence: 0.5,
                             minTrackingConfidence: 0.5
                         });
@@ -635,9 +677,9 @@
                         console.log('Initializing PoseNet...');
                         this.posenet = await posenet.load({
                             architecture: 'MobileNetV1',
-                            outputStride: 16,
-                            inputResolution: { width: 640, height: 480 },
-                            multiplier: 0.75
+                            outputStride: 32, // Increased for speed (16 is more accurate but slower)
+                            inputResolution: { width: 320, height: 240 }, // Reduced resolution for speed
+                            multiplier: 0.5 // Reduced for speed
                         });
                         this.poseDetectionMethod = 'posenet';
                         this.updatePoseDetectionStatus('PoseNet (TensorFlow.js)');
@@ -678,19 +720,43 @@
             }
             
             startPoseDetection() {
-                const detectPose = () => {
-                    if (this.video.readyState === 4) {
-                        if (this.poseDetectionMethod === 'holistic' && this.holistic) {
-                            this.holistic.send({ image: this.video });
-                        } else if (this.poseDetectionMethod === 'posenet' && this.posenet) {
-                            this.detectPoseWithPoseNet();
-                        } else if (this.poseDetectionMethod === 'mediapipe' && this.pose) {
-                            this.pose.send({ image: this.video });
+                const detectPose = (currentTime) => {
+                    // 60 FPS frame rate control
+                    if (currentTime - this.lastFrameTime >= this.frameTime && !this.isProcessing) {
+                        this.isProcessing = true;
+                        this.lastFrameTime = currentTime;
+                        this.frameCount++;
+                        
+                        if (this.video.readyState === 4) {
+                            if (this.poseDetectionMethod === 'holistic' && this.holistic) {
+                                this.holistic.send({ image: this.video });
+                            } else if (this.poseDetectionMethod === 'posenet' && this.posenet) {
+                                this.detectPoseWithPoseNet();
+                            } else if (this.poseDetectionMethod === 'mediapipe' && this.pose) {
+                                this.pose.send({ image: this.video });
+                            }
                         }
+                        
+                        // Update FPS counter
+                        this.updateFPSCounter(currentTime);
+                        
+                        this.isProcessing = false;
                     }
+                    
                     requestAnimationFrame(detectPose);
                 };
                 detectPose();
+            }
+            
+            updateFPSCounter(currentTime) {
+                this.fpsCounter++;
+                
+                if (currentTime - this.lastFpsUpdate >= this.fpsUpdateInterval) {
+                    const actualFPS = Math.round((this.fpsCounter * 1000) / (currentTime - this.lastFpsUpdate));
+                    this.updateFPSDisplay(actualFPS);
+                    this.fpsCounter = 0;
+                    this.lastFpsUpdate = currentTime;
+                }
             }
             
             async detectPoseWithPoseNet() {
@@ -723,15 +789,22 @@
             // Process MediaPipe Holistic results (most accurate)
             processHolisticResults(results) {
                 if (results.poseLandmarks) {
+                    // Apply advanced smoothing and validation
+                    const smoothedLandmarks = this.applyAdvancedSmoothing(results.poseLandmarks);
+                    const validatedLandmarks = this.validateJointDetections(smoothedLandmarks);
+                    
                     // Only calibrate when user clicks the calibrate button
                     if (this.calibrationInProgress) {
-                        this.calibrateFromPose(results.poseLandmarks);
+                        this.calibrateFromPose(validatedLandmarks);
                     }
                     
                     // If following player after calibration, keep zone attached to joints
                     if (this.isCalibrated && this.followPlayer) {
-                        this.updateStrikeZoneFromPose(results.poseLandmarks);
+                        this.updateStrikeZoneFromPose(validatedLandmarks);
                     }
+                    
+                    // Update results with smoothed landmarks for drawing
+                    results.poseLandmarks = validatedLandmarks;
                 }
                 
                 // Draw pose landmarks
@@ -802,6 +875,113 @@
                 return landmarks;
             }
             
+            // Advanced temporal smoothing for stable tracking
+            applyAdvancedSmoothing(landmarks) {
+                // Add current frame to history
+                this.landmarkHistory.push(landmarks);
+                if (this.landmarkHistory.length > this.maxHistoryFrames) {
+                    this.landmarkHistory.shift();
+                }
+                
+                // Need at least 3 frames for smoothing
+                if (this.landmarkHistory.length < 3) {
+                    return landmarks;
+                }
+                
+                const smoothedLandmarks = [];
+                
+                for (let i = 0; i < landmarks.length; i++) {
+                    if (!landmarks[i]) {
+                        smoothedLandmarks[i] = null;
+                        continue;
+                    }
+                    
+                    // Calculate weighted average of recent frames
+                    let totalWeight = 0;
+                    let weightedX = 0;
+                    let weightedY = 0;
+                    let weightedZ = 0;
+                    let weightedVisibility = 0;
+                    
+                    // Recent frames get higher weight
+                    for (let frameIndex = 0; frameIndex < this.landmarkHistory.length; frameIndex++) {
+                        const frame = this.landmarkHistory[frameIndex];
+                        if (frame[i] && frame[i].visibility > this.confidenceThreshold) {
+                            const weight = (frameIndex + 1) / this.landmarkHistory.length; // More recent = higher weight
+                            weightedX += frame[i].x * weight;
+                            weightedY += frame[i].y * weight;
+                            weightedZ += frame[i].z * weight;
+                            weightedVisibility += frame[i].visibility * weight;
+                            totalWeight += weight;
+                        }
+                    }
+                    
+                    if (totalWeight > 0) {
+                        smoothedLandmarks[i] = {
+                            x: weightedX / totalWeight,
+                            y: weightedY / totalWeight,
+                            z: weightedZ / totalWeight,
+                            visibility: weightedVisibility / totalWeight
+                        };
+                    } else {
+                        smoothedLandmarks[i] = landmarks[i];
+                    }
+                }
+                
+                return smoothedLandmarks;
+            }
+            
+            // Validate joint detections across multiple frames
+            validateJointDetections(landmarks) {
+                const keyJoints = [11, 12, 23, 24]; // shoulders and hips
+                const jointNames = ['leftShoulder', 'rightShoulder', 'leftHip', 'rightHip'];
+                
+                keyJoints.forEach((jointIndex, i) => {
+                    const jointName = jointNames[i];
+                    const landmark = landmarks[jointIndex];
+                    
+                    if (landmark && landmark.visibility > this.confidenceThreshold) {
+                        // Add to validation history
+                        this.jointValidationHistory[jointName].push({
+                            x: landmark.x,
+                            y: landmark.y,
+                            visibility: landmark.visibility,
+                            timestamp: Date.now()
+                        });
+                        
+                        // Keep only recent history
+                        if (this.jointValidationHistory[jointName].length > this.jointValidationFrames) {
+                            this.jointValidationHistory[jointName].shift();
+                        }
+                        
+                        // Check if we have enough consistent detections
+                        if (this.jointValidationHistory[jointName].length >= this.jointValidationFrames) {
+                            // Calculate consistency (low variance = consistent)
+                            const positions = this.jointValidationHistory[jointName];
+                            const avgX = positions.reduce((sum, p) => sum + p.x, 0) / positions.length;
+                            const avgY = positions.reduce((sum, p) => sum + p.y, 0) / positions.length;
+                            const variance = positions.reduce((sum, p) => 
+                                sum + Math.pow(p.x - avgX, 2) + Math.pow(p.y - avgY, 2), 0) / positions.length;
+                            
+                            // If variance is too high, use the most recent stable position
+                            if (variance > 0.01) { // Threshold for position stability
+                                landmarks[jointIndex] = {
+                                    x: avgX,
+                                    y: avgY,
+                                    z: landmark.z,
+                                    visibility: Math.min(landmark.visibility, 0.8) // Reduce confidence for unstable joints
+                                };
+                            }
+                        }
+                    } else {
+                        // Clear history if current detection is poor
+                        this.jointValidationHistory[jointName] = [];
+                    }
+                });
+                
+                return landmarks;
+            }
+            
             calibrateFromPose(landmarks) {
                 try {
                     // Get shoulder and hip positions
@@ -810,45 +990,61 @@
                     const leftHip = landmarks[23];
                     const rightHip = landmarks[24];
                     
-                    // Check if all required landmarks are present and valid
+                    // Enhanced validation with higher confidence requirements
                     if (leftShoulder && rightShoulder && leftHip && rightHip &&
-                        leftShoulder.visibility > 0.5 && rightShoulder.visibility > 0.5 &&
-                        leftHip.visibility > 0.5 && rightHip.visibility > 0.5) {
+                        leftShoulder.visibility > this.confidenceThreshold && 
+                        rightShoulder.visibility > this.confidenceThreshold &&
+                        leftHip.visibility > this.confidenceThreshold && 
+                        rightHip.visibility > this.confidenceThreshold) {
                         
-                        // Calculate strike zone based on body landmarks
-                        const shoulderCenter = {
-                            x: (leftShoulder.x + rightShoulder.x) / 2,
-                            y: (leftShoulder.y + rightShoulder.y) / 2
-                        };
+                        // Additional geometric validation
+                        const shoulderDistance = Math.abs(rightShoulder.x - leftShoulder.x);
+                        const hipDistance = Math.abs(rightHip.x - leftHip.x);
+                        const shoulderHipDistance = Math.abs(
+                            (leftShoulder.y + rightShoulder.y) / 2 - (leftHip.y + rightHip.y) / 2
+                        );
                         
-                        const hipCenter = {
-                            x: (leftHip.x + rightHip.x) / 2,
-                            y: (leftHip.y + rightHip.y) / 2
-                        };
-                        
-                        // Calculate strike zone dimensions
-                        const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
-                        const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
-                        
-                        // Validate dimensions
-                        if (shoulderWidth > 0.05 && bodyHeight > 0.1) {
-                            this.strikeZone = {
-                                center: {
-                                    x: (shoulderCenter.x + hipCenter.x) / 2,
-                                    y: (shoulderCenter.y + hipCenter.y) / 2
-                                },
-                                width: Math.min(0.15, Math.max(0.05, shoulderWidth * 1.2)),
-                                height: Math.max(0.1, bodyHeight * 0.65)
+                        // Validate reasonable body proportions
+                        if (shoulderDistance > 0.05 && hipDistance > 0.05 && shoulderHipDistance > 0.1 &&
+                            shoulderDistance < 0.4 && hipDistance < 0.4 && shoulderHipDistance < 0.6) {
+                            
+                            // Calculate strike zone based on body landmarks
+                            const shoulderCenter = {
+                                x: (leftShoulder.x + rightShoulder.x) / 2,
+                                y: (leftShoulder.y + rightShoulder.y) / 2
                             };
                             
-                            this.isCalibrated = true;
-                            this.followPlayer = true;
-                            this.calibrationInProgress = false;
-                            this.updateStatus('Strike zone calibrated! Ready to track throws.');
-                            document.getElementById('calibrationStatus').style.display = 'block';
-                            document.getElementById('calibrationText').textContent = 'Calibrated successfully';
+                            const hipCenter = {
+                                x: (leftHip.x + rightHip.x) / 2,
+                                y: (leftHip.y + rightHip.y) / 2
+                            };
+                            
+                            // Calculate strike zone dimensions
+                            const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+                            const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
+                            
+                            // Validate dimensions
+                            if (shoulderWidth > 0.05 && bodyHeight > 0.1) {
+                                this.strikeZone = {
+                                    center: {
+                                        x: (shoulderCenter.x + hipCenter.x) / 2,
+                                        y: (shoulderCenter.y + hipCenter.y) / 2
+                                    },
+                                    width: Math.min(0.15, Math.max(0.05, shoulderWidth * 1.2)),
+                                    height: Math.max(0.1, bodyHeight * 0.65)
+                                };
+                                
+                                this.isCalibrated = true;
+                                this.followPlayer = true;
+                                this.calibrationInProgress = false;
+                                this.updateStatus('Strike zone calibrated! Ready to track throws.');
+                                document.getElementById('calibrationStatus').style.display = 'block';
+                                document.getElementById('calibrationText').textContent = 'Calibrated successfully';
+                            } else {
+                                this.updateStatus('Calibration failed: Please ensure shoulders and hips are clearly visible.');
+                            }
                         } else {
-                            this.updateStatus('Calibration failed: Please ensure shoulders and hips are clearly visible.');
+                            this.updateStatus('Calibration failed: Please position yourself with shoulders and hips visible.');
                         }
                     } else {
                         this.updateStatus('Calibration failed: Please position yourself with shoulders and hips visible.');
@@ -865,6 +1061,9 @@
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 
                 if (results.poseLandmarks) {
+                    // Update tracking quality
+                    this.updateTrackingQuality(results.poseLandmarks);
+                    
                     // Draw pose connections
                     this.drawConnections(results.poseLandmarks, POSE_CONNECTIONS, '#00FF00');
                     
@@ -1033,19 +1232,53 @@
             }
             
             drawLandmarks(landmarks, color = '#FF0000', radius = 3) {
-                this.ctx.fillStyle = color;
                 landmarks.forEach((landmark, index) => {
                     if (landmark && landmark.visibility > 0.3) {
                         const x = landmark.x * this.canvas.width;
                         const y = landmark.y * this.canvas.height;
+                        
+                        // Color based on confidence level
+                        let jointColor = color;
+                        let jointRadius = radius;
+                        
+                        if (landmark.visibility > 0.9) {
+                            jointColor = '#00FF00'; // Green for high confidence
+                            jointRadius = radius + 2;
+                        } else if (landmark.visibility > 0.7) {
+                            jointColor = '#FFFF00'; // Yellow for medium confidence
+                            jointRadius = radius + 1;
+                        } else {
+                            jointColor = '#FF0000'; // Red for low confidence
+                        }
+                        
+                        // Draw confidence ring
                         this.ctx.beginPath();
-                        this.ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                        this.ctx.arc(x, y, jointRadius + 3, 0, 2 * Math.PI);
+                        this.ctx.strokeStyle = jointColor;
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                        
+                        // Draw main joint
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, jointRadius, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = jointColor;
                         this.ctx.fill();
                         
                         // Add white border for better visibility
                         this.ctx.strokeStyle = '#FFFFFF';
                         this.ctx.lineWidth = 1;
                         this.ctx.stroke();
+                        
+                        // Show confidence percentage for key joints
+                        if ([11, 12, 23, 24].includes(index)) {
+                            this.ctx.fillStyle = '#FFFFFF';
+                            this.ctx.font = '10px Arial';
+                            this.ctx.fillText(
+                                `${Math.round(landmark.visibility * 100)}%`, 
+                                x + 8, 
+                                y - 8
+                            );
+                        }
                     }
                 });
             }
@@ -1579,6 +1812,16 @@
                 };
                 this.strikeZone = null;
                 this.sessionStart = null;
+                
+                // Reset tracking accuracy data
+                this.landmarkHistory = [];
+                this.jointValidationHistory = {
+                    leftShoulder: [],
+                    rightShoulder: [],
+                    leftHip: [],
+                    rightHip: []
+                };
+                
                 document.getElementById('lockCalibrationBtn').disabled = true;
                 this.updateUI();
                 this.updateStatus('Statistics reset. Ready for new session.');
@@ -1591,6 +1834,79 @@
             updatePoseDetectionStatus(method) {
                 document.getElementById('poseMethod').textContent = method;
                 document.getElementById('poseDetectionStatus').style.display = 'block';
+                document.getElementById('trackingQualityStatus').style.display = 'block';
+                document.getElementById('fpsStatus').style.display = 'block';
+            }
+            
+            updateFPSDisplay(fps) {
+                document.getElementById('fpsDisplay').textContent = `${fps} FPS`;
+                
+                // Color code based on FPS
+                let fpsColor = '#4CAF50'; // Green for 60 FPS
+                let fpsPercentage = (fps / 60) * 100;
+                
+                if (fps >= 55) {
+                    fpsColor = '#4CAF50'; // Green
+                } else if (fps >= 45) {
+                    fpsColor = '#8BC34A'; // Light green
+                } else if (fps >= 30) {
+                    fpsColor = '#FF9800'; // Orange
+                } else {
+                    fpsColor = '#f44336'; // Red
+                }
+                
+                document.getElementById('fpsBar').style.width = fpsPercentage + '%';
+                document.getElementById('fpsBar').style.background = 
+                    `linear-gradient(90deg, ${fpsColor}, ${fpsColor}dd)`;
+            }
+            
+            updateTrackingQuality(landmarks) {
+                if (!landmarks) return;
+                
+                const keyJoints = [11, 12, 23, 24]; // shoulders and hips
+                let totalConfidence = 0;
+                let validJoints = 0;
+                
+                keyJoints.forEach(index => {
+                    if (landmarks[index] && landmarks[index].visibility > 0.3) {
+                        totalConfidence += landmarks[index].visibility;
+                        validJoints++;
+                    }
+                });
+                
+                if (validJoints === 0) {
+                    this.updateTrackingQualityDisplay(0, 'Poor');
+                    return;
+                }
+                
+                const avgConfidence = totalConfidence / validJoints;
+                const qualityPercentage = Math.round(avgConfidence * 100);
+                
+                let qualityText = 'Poor';
+                let qualityColor = '#f44336';
+                
+                if (qualityPercentage >= 85) {
+                    qualityText = 'Excellent';
+                    qualityColor = '#4CAF50';
+                } else if (qualityPercentage >= 70) {
+                    qualityText = 'Good';
+                    qualityColor = '#8BC34A';
+                } else if (qualityPercentage >= 50) {
+                    qualityText = 'Fair';
+                    qualityColor = '#FF9800';
+                } else {
+                    qualityText = 'Poor';
+                    qualityColor = '#f44336';
+                }
+                
+                this.updateTrackingQualityDisplay(qualityPercentage, qualityText, qualityColor);
+            }
+            
+            updateTrackingQualityDisplay(percentage, text, color = '#4CAF50') {
+                document.getElementById('trackingQuality').textContent = text;
+                document.getElementById('trackingQualityBar').style.width = percentage + '%';
+                document.getElementById('trackingQualityBar').style.background = 
+                    `linear-gradient(90deg, ${color}, ${color}dd)`;
             }
         }
         
@@ -1611,4 +1927,5 @@
     </script>
 </body>
 </html>
+
 
