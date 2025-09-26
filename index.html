@@ -1286,22 +1286,3 @@ tml>
                     depths: [],
                     currentDepth: 0
                 };
-                
-                this.isCalibrated = false;
-                this.calibrationInProgress = false;
-                this.manualCalibrationMode = false;
-                this.selectedJoints = {
-                    leftShoulder: null,
-                    rightShoulder: null,
-                    leftHip: null,
-                    rightHip: null
-                };
-                this.strikeZone = null;
-                this.sessionStart = null;
-                document.getElementById('lockCalibrationBtn').disabled = true;
-                this.updateUI();
-                this.updateStatus('Statistics reset. Ready for new session.');
-            }
-            
-            updateStatus(message) {
-                
