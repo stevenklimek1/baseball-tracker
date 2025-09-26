@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baseball Tracker 3D - Web Version</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@latest/dist/coco-ssd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            color: white;
+            min-height: 100vh;
+            position: relative;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 20%, rgba(0, 0, 139, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 0, 139, 0.2) 0%, transparent 50%),
+                linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            z-index: -1;
+        }
+        
+        .yankees-logo {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            background: #ffffff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+        
+        .yankees-logo::before {
+            content: 'NY';
+            font-family: 'Times New Roman', serif;
+            font-size: 24px;
+            font-weight: bold;
+            color: #1a1a2e;
+            text-align: center;
+        }
+        
+        .yankees-logo::after {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border: 3px solid #1a1a2e;
+            border-radius: 50%;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .video-section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .stats-section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        #video {
+            width: 100%;
+            border-radius: 10px;
+            border: 3px solid #4CAF50;
+        }
+        
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 10px;
+        }
+        
+        .video-container {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .reset-btn {
+            background: linear-gradient(45deg, #f44336, #d32f2f);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-top: 5px;
+        }
+        
+        .zone-stats {
+            margin-top: 20px;
+        }
+        
+        .zone-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .zone-title {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+        
+        .zone-progress {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .zone-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            transition: width 0.3s ease;
+        }
+        
+        .status {
+            background: rgba(33, 150, 243, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .instructions {
+            background: rgba(255, 152, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #FF9800;
+        }
+        
+        .calibration-status {
+            background: rgba(76, 175, 80, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .player-info {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #FFD700;
+        }
+        
+        .player-input {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .player-input input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px;
+            border: 2px solid #4CAF50;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
+        
+        .player-input input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .player-input input:focus {
+            border-color: #FFD700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+        
+        .player-name-display {
+            background: rgba(255, 215, 0, 0.2);
+            border-radius: 10px;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #FFD700;
+            font-weight: bold;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+                padding: 10px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .yankees-logo {
+                width: 60px;
+                height: 60px;
+                top: 10px;
+                right: 10px;
+            }
+            
+            .yankees-logo::before {
+                font-size: 18px;
+            }
+            
+            .yankees-logo::after {
+                width: 45px;
+                height: 45px;
+            }
+            
+            #video {
+                width: 100%;
+                height: auto;
+                max-height: 300px;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            button {
+                width: 100%;
+                max-width: 300px;
+                margin: 5px 0;
+            }
+            
+            .video-section, .stats-section {
+                padding: 15px;
+            }
+            
+            .player-input {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .player-input input {
+                min-width: auto;
+                width: 100%;
+                margin-bottom: 10px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+            
+            .yankees-logo {
+                width: 50px;
+                height: 50px;
+                top: 5px;
+                right: 5px;
+            }
+            
+            .yankees-logo::before {
+                font-size: 16px;
+            }
+            
+            .yankees-logo::after {
+                width: 35px;
+                height: 35px;
+            }
+            
+            h2 {
+                font-size: 1.5em;
+                margin-top: 40px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- New York Yankees Logo -->
+    <div class="yankees-logo"></div>
+    
+    <div class="container">
+        <div class="video-section">
+            <h2>🎯 Baseball Tracker 3D - Web Version</h2>
+            
+            <div class="video-container">
+                <video id="video" autoplay muted playsinline></video>
+                <canvas id="canvas"></canvas>
+            </div>
+            
+            <div class="player-info">
+                <h3>👤 Player Information</h3>
+                <div class="player-input">
+                    <input type="text" id="playerNameInput" placeholder="Enter your name (e.g., John Smith)" maxlength="30">
+                    <button id="setPlayerBtn">Set Player</button>
+                </div>
+                <div class="player-name-display" id="playerNameDisplay" style="display: none;">
+                    <strong>Current Player:</strong> <span id="currentPlayerName">Not set</span>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <button id="startBtn">Start Camera</button>
+                <button id="calibrateBtn" disabled>Calibrate Strike Zone</button>
+                <button id="resetBtn" class="reset-btn">Reset Statistics</button>
+            </div>
+            
+            <div class="status" id="status">
+                <strong>Status:</strong> Click "Start Camera" to begin
+            </div>
+            
+            <div class="instructions" id="instructions">
+                <strong>Instructions:</strong> 
+                <ol>
+                    <li>Click "Start Camera" and allow camera access</li>
+                    <li>Position player in frame with shoulders and hips visible</li>
+                    <li>Click "Calibrate Strike Zone" when ready</li>
+                    <li>Start throwing baseballs to track accuracy</li>
+                </ol>
+            </div>
+            
+            <div class="calibration-status" id="calibrationStatus" style="display: none;">
+                <strong>Calibration:</strong> <span id="calibrationText">Ready to calibrate</span>
+            </div>
+        </div>
+        
+        <div class="stats-section">
+            <h2>📊 Statistics Dashboard</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalThrows">0</div>
+                    <div class="stat-label">Total Throws</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="strikes">0</div>
+                    <div class="stat-label">Strikes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="balls">0</div>
+                    <div class="stat-label">Balls</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="strikePercentage">0%</div>
+                    <div class="stat-label">Strike %</div>
+                </div>
+            </div>
+            
+            <div class="zone-stats">
+                <h3>🎯 Distance Zone Statistics</h3>
+                
+                <div class="zone-card">
+                    <div class="zone-title">60-90 Feet (Short Distance)</div>
+                    <div class="zone-progress">
+                        <div class="zone-progress-bar" id="zone60to90Bar" style="width: 0%"></div>
+                    </div>
+                    <div id="zone60to90Stats">0/0 throws (0% accuracy)</div>
+                </div>
+                
+                <div class="zone-card">
+                    <div class="zone-title">90-120 Feet (Medium Distance)</div>
+                    <div class="zone-progress">
+                        <div class="zone-progress-bar" id="zone90to120Bar" style="width: 0%"></div>
+                    </div>
+                    <div id="zone90to120Stats">0/0 throws (0% accuracy)</div>
+                </div>
+                
+                <div class="zone-card">
+                    <div class="zone-title">120+ Feet (Long Distance)</div>
+                    <div class="zone-progress">
+                        <div class="zone-progress-bar" id="zone120PlusBar" style="width: 0%"></div>
+                    </div>
+                    <div id="zone120PlusStats">0/0 throws (0% accuracy)</div>
+                </div>
+            </div>
+            
+            <div class="zone-stats">
+                <h3>📈 Session Summary</h3>
+                <div class="zone-card">
+                    <div class="zone-title">Current Session</div>
+                    <div id="sessionSummary">
+                        <p><strong>Player:</strong> <span id="sessionPlayer">Not set</span></p>
+                        <p><strong>Session Started:</strong> <span id="sessionStart">Not started</span></p>
+                        <p><strong>Best Zone:</strong> <span id="bestZone">None</span></p>
+                        <p><strong>Average Accuracy:</strong> <span id="avgAccuracy">0%</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class BaseballTrackerWeb {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                
+                // Statistics
+                this.stats = {
+                    totalThrows: 0,
+                    strikes: 0,
+                    balls: 0,
+                    zone60to90: { total: 0, inZone: 0 },
+                    zone90to120: { total: 0, inZone: 0 },
+                    zone120Plus: { total: 0, inZone: 0 }
+                };
+                
+                // Calibration
+                this.isCalibrated = false;
+                this.strikeZone = null;
+                this.pose = null;
+                this.model = null;
+                
+                // Session tracking
+                this.sessionStart = null;
+                this.lastThrowTime = 0;
+                this.currentPlayer = null;
+                
+                this.initializeElements();
+            }
+            
+            initializeElements() {
+                document.getElementById('startBtn').addEventListener('click', () => this.startCamera());
+                document.getElementById('calibrateBtn').addEventListener('click', () => this.startCalibration());
+                document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
+                document.getElementById('setPlayerBtn').addEventListener('click', () => this.setPlayerName());
+                
+                // Allow Enter key to set player name
+                document.getElementById('playerNameInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.setPlayerName();
+                    }
+                });
+            }
+            
+            async startCamera() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            width: 1280, 
+                            height: 720,
+                            facingMode: 'environment' // Use back camera if available
+                        } 
+                    });
+                    
+                    this.video.srcObject = stream;
+                    this.video.onloadedmetadata = () => {
+                        this.canvas.width = this.video.videoWidth;
+                        this.canvas.height = this.video.videoHeight;
+                    };
+                    
+                    // Initialize pose detection
+                    await this.initializePoseDetection();
+                    
+                    // Initialize object detection for baseball
+                    await this.initializeObjectDetection();
+                    
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('calibrateBtn').disabled = false;
+                    this.updateStatus('Camera started! Position player in frame for calibration.');
+                    
+                } catch (error) {
+                    console.error('Error accessing camera:', error);
+                    this.updateStatus('Error: Could not access camera. Please check permissions.');
+                }
+            }
+            
+            async initializePoseDetection() {
+                // Initialize MediaPipe Pose
+                this.pose = new Pose({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                    }
+                });
+                
+                this.pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    enableSegmentation: false,
+                    smoothSegmentation: false,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                
+                this.pose.onResults((results) => this.processPoseResults(results));
+            }
+            
+            async initializeObjectDetection() {
+                // Initialize COCO-SSD for object detection (including sports balls)
+                this.model = await cocoSsd.load();
+            }
+            
+            async processPoseResults(results) {
+                if (!this.isCalibrated && results.poseLandmarks) {
+                    this.calibrateFromPose(results.poseLandmarks);
+                }
+                
+                // Draw pose landmarks
+                this.drawPoseLandmarks(results);
+            }
+            
+            calibrateFromPose(landmarks) {
+                // Get shoulder and hip positions
+                const leftShoulder = landmarks[11];
+                const rightShoulder = landmarks[12];
+                const leftHip = landmarks[23];
+                const rightHip = landmarks[24];
+                
+                if (leftShoulder && rightShoulder && leftHip && rightHip) {
+                    // Calculate strike zone based on body landmarks
+                    const shoulderCenter = {
+                        x: (leftShoulder.x + rightShoulder.x) / 2,
+                        y: (leftShoulder.y + rightShoulder.y) / 2
+                    };
+                    
+                    const hipCenter = {
+                        x: (leftHip.x + rightHip.x) / 2,
+                        y: (leftHip.y + rightHip.y) / 2
+                    };
+                    
+                    // Calculate strike zone dimensions
+                    const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+                    const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
+                    
+                    this.strikeZone = {
+                        center: {
+                            x: (shoulderCenter.x + hipCenter.x) / 2,
+                            y: (shoulderCenter.y + hipCenter.y) / 2
+                        },
+                        width: Math.min(0.15, shoulderWidth * 1.2), // 15% of screen width or 120% of shoulder width
+                        height: bodyHeight * 0.65 // 65% of body height
+                    };
+                    
+                    this.isCalibrated = true;
+                    this.updateStatus('Strike zone calibrated! Ready to track throws.');
+                    document.getElementById('calibrationStatus').style.display = 'block';
+                    document.getElementById('calibrationText').textContent = 'Calibrated successfully';
+                }
+            }
+            
+            drawPoseLandmarks(results) {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                if (results.poseLandmarks) {
+                    // Draw pose connections
+                    this.drawConnections(results.poseLandmarks, POSE_CONNECTIONS, '#00FF00');
+                    
+                    // Draw strike zone if calibrated
+                    if (this.isCalibrated && this.strikeZone) {
+                        this.drawStrikeZone();
+                    }
+                }
+                
+                // Detect and track baseball
+                this.detectBaseball();
+            }
+            
+            drawConnections(landmarks, connections, color) {
+                this.ctx.strokeStyle = color;
+                this.ctx.lineWidth = 2;
+                
+                connections.forEach(([start, end]) => {
+                    const startPoint = landmarks[start];
+                    const endPoint = landmarks[end];
+                    
+                    if (startPoint && endPoint) {
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(startPoint.x * this.canvas.width, startPoint.y * this.canvas.height);
+                        this.ctx.lineTo(endPoint.x * this.canvas.width, endPoint.y * this.canvas.height);
+                        this.ctx.stroke();
+                    }
+                });
+            }
+            
+            drawStrikeZone() {
+                const x = (this.strikeZone.center.x - this.strikeZone.width / 2) * this.canvas.width;
+                const y = (this.strikeZone.center.y - this.strikeZone.height / 2) * this.canvas.height;
+                const width = this.strikeZone.width * this.canvas.width;
+                const height = this.strikeZone.height * this.canvas.height;
+                
+                this.ctx.strokeStyle = '#00FF00';
+                this.ctx.lineWidth = 3;
+                this.ctx.strokeRect(x, y, width, height);
+                
+                // Add label
+                this.ctx.fillStyle = '#00FF00';
+                this.ctx.font = '16px Arial';
+                this.ctx.fillText('STRIKE ZONE', x, y - 10);
+            }
+            
+            async detectBaseball() {
+                if (!this.model || !this.isCalibrated) return;
+                
+                try {
+                    const predictions = await this.model.detect(this.video);
+                    
+                    predictions.forEach(prediction => {
+                        if (prediction.class === 'sports ball' && prediction.score > 0.5) {
+                            this.trackBaseball(prediction);
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error detecting baseball:', error);
+                }
+            }
+            
+            trackBaseball(prediction) {
+                const currentTime = Date.now();
+                
+                // Throttle detection to avoid multiple counts
+                if (currentTime - this.lastThrowTime < 1000) return;
+                
+                const ballCenter = {
+                    x: prediction.bbox[0] + prediction.bbox[2] / 2,
+                    y: prediction.bbox[1] + prediction.bbox[3] / 2
+                };
+                
+                // Convert to normalized coordinates
+                const normalizedX = ballCenter.x / this.canvas.width;
+                const normalizedY = ballCenter.y / this.canvas.height;
+                
+                // Check if ball is in strike zone
+                const isInStrikeZone = this.isBallInStrikeZone(normalizedX, normalizedY);
+                
+                // Estimate distance based on ball size
+                const ballSize = Math.max(prediction.bbox[2], prediction.bbox[3]);
+                const distanceZone = this.estimateDistanceZone(ballSize);
+                
+                // Update statistics
+                this.updateStatistics(isInStrikeZone, distanceZone);
+                
+                // Draw ball
+                this.drawBall(ballCenter, isInStrikeZone);
+                
+                this.lastThrowTime = currentTime;
+            }
+            
+            isBallInStrikeZone(x, y) {
+                if (!this.strikeZone) return false;
+                
+                const zoneLeft = this.strikeZone.center.x - this.strikeZone.width / 2;
+                const zoneRight = this.strikeZone.center.x + this.strikeZone.width / 2;
+                const zoneTop = this.strikeZone.center.y - this.strikeZone.height / 2;
+                const zoneBottom = this.strikeZone.center.y + this.strikeZone.height / 2;
+                
+                return x >= zoneLeft && x <= zoneRight && y >= zoneTop && y <= zoneBottom;
+            }
+            
+            estimateDistanceZone(ballSize) {
+                // Estimate distance based on ball size (larger = closer)
+                if (ballSize > 100) return 'zone60to90';
+                if (ballSize > 50) return 'zone90to120';
+                return 'zone120Plus';
+            }
+            
+            updateStatistics(isInStrikeZone, distanceZone) {
+                this.stats.totalThrows++;
+                
+                if (isInStrikeZone) {
+                    this.stats.strikes++;
+                } else {
+                    this.stats.balls++;
+                }
+                
+                // Update zone statistics
+                this.stats[distanceZone].total++;
+                if (isInStrikeZone) {
+                    this.stats[distanceZone].inZone++;
+                }
+                
+                this.updateUI();
+            }
+            
+            drawBall(center, isInStrikeZone) {
+                this.ctx.beginPath();
+                this.ctx.arc(center.x, center.y, 10, 0, 2 * Math.PI);
+                this.ctx.fillStyle = isInStrikeZone ? '#00FF00' : '#FF0000';
+                this.ctx.fill();
+                this.ctx.strokeStyle = '#FFFFFF';
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
+            
+            updateUI() {
+                // Update main statistics
+                document.getElementById('totalThrows').textContent = this.stats.totalThrows;
+                document.getElementById('strikes').textContent = this.stats.strikes;
+                document.getElementById('balls').textContent = this.stats.balls;
+                
+                const strikePercentage = this.stats.totalThrows > 0 ? 
+                    (this.stats.strikes / this.stats.totalThrows * 100).toFixed(1) : 0;
+                document.getElementById('strikePercentage').textContent = strikePercentage + '%';
+                
+                // Update zone statistics
+                this.updateZoneStats('zone60to90', '60-90 Feet');
+                this.updateZoneStats('zone90to120', '90-120 Feet');
+                this.updateZoneStats('zone120Plus', '120+ Feet');
+                
+                // Update session summary
+                this.updateSessionSummary();
+            }
+            
+            updateZoneStats(zone, label) {
+                const zoneData = this.stats[zone];
+                const accuracy = zoneData.total > 0 ? (zoneData.inZone / zoneData.total * 100).toFixed(1) : 0;
+                
+                document.getElementById(zone + 'Stats').textContent = 
+                    `${zoneData.inZone}/${zoneData.total} throws (${accuracy}% accuracy)`;
+                
+                const progressBar = document.getElementById(zone + 'Bar');
+                progressBar.style.width = accuracy + '%';
+            }
+            
+            setPlayerName() {
+                const nameInput = document.getElementById('playerNameInput');
+                const playerName = nameInput.value.trim();
+                
+                if (playerName.length === 0) {
+                    alert('Please enter a player name!');
+                    return;
+                }
+                
+                this.currentPlayer = playerName;
+                document.getElementById('currentPlayerName').textContent = playerName;
+                document.getElementById('playerNameDisplay').style.display = 'block';
+                document.getElementById('sessionPlayer').textContent = playerName;
+                
+                // Clear the input
+                nameInput.value = '';
+                
+                this.updateStatus(`Player set to: ${playerName}. Ready to start tracking!`);
+            }
+            
+            updateSessionSummary() {
+                if (!this.sessionStart) {
+                    this.sessionStart = new Date();
+                }
+                
+                document.getElementById('sessionStart').textContent = 
+                    this.sessionStart.toLocaleTimeString();
+                
+                // Update player name in session summary
+                document.getElementById('sessionPlayer').textContent = 
+                    this.currentPlayer || 'Not set';
+                
+                // Find best zone
+                let bestZone = 'None';
+                let bestAccuracy = 0;
+                
+                Object.keys(this.stats).forEach(zone => {
+                    if (zone.startsWith('zone') && this.stats[zone].total > 0) {
+                        const accuracy = this.stats[zone].inZone / this.stats[zone].total;
+                        if (accuracy > bestAccuracy) {
+                            bestAccuracy = accuracy;
+                            bestZone = zone.replace('zone', '').replace(/([A-Z])/g, ' $1').trim();
+                        }
+                    }
+                });
+                
+                document.getElementById('bestZone').textContent = bestZone;
+                document.getElementById('avgAccuracy').textContent = 
+                    this.stats.totalThrows > 0 ? 
+                    (this.stats.strikes / this.stats.totalThrows * 100).toFixed(1) + '%' : '0%';
+            }
+            
+            startCalibration() {
+                this.updateStatus('Calibrating... Position player in frame with shoulders and hips visible.');
+                document.getElementById('calibrationStatus').style.display = 'block';
+                document.getElementById('calibrationText').textContent = 'Calibrating...';
+            }
+            
+            resetStatistics() {
+                this.stats = {
+                    totalThrows: 0,
+                    strikes: 0,
+                    balls: 0,
+                    zone60to90: { total: 0, inZone: 0 },
+                    zone90to120: { total: 0, inZone: 0 },
+                    zone120Plus: { total: 0, inZone: 0 }
+                };
+                
+                this.sessionStart = null;
+                this.updateUI();
+                this.updateStatus('Statistics reset. Ready for new session.');
+            }
+            
+            updateStatus(message) {
+                document.getElementById('status').innerHTML = `<strong>Status:</strong> ${message}`;
+            }
+        }
+        
+        // Initialize the tracker when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new BaseballTrackerWeb();
+        });
+        
+        // POSE_CONNECTIONS for MediaPipe
+        const POSE_CONNECTIONS = [
+            [11, 12], [11, 13], [11, 23], [12, 14], [12, 24],
+            [13, 15], [14, 16], [15, 17], [16, 18], [15, 19],
+            [16, 20], [15, 21], [16, 22], [11, 23], [12, 24],
+            [23, 24], [23, 25], [24, 26], [25, 27], [26, 28],
+            [27, 29], [28, 30], [29, 31], [30, 32], [27, 31],
+            [28, 32]
+        ];
+    </script>
+</body>
+</html>
