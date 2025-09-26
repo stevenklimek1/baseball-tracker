@@ -391,6 +391,7 @@
                 <button id="calibrateBtn" disabled>Manual Calibration</button>
                 <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
                 <button id="adjustBtn" disabled>Adjust Position</button>
+                <button id="debugBtn" disabled>Debug Mode</button>
                 <button id="resetBtn" class="reset-btn">Reset Statistics</button>
             </div>
             
@@ -552,7 +553,7 @@
                 // Advanced tracking accuracy improvements (optimized for 60 FPS)
                 this.landmarkHistory = []; // Store last 5 frames for smoothing (reduced for speed)
                 this.maxHistoryFrames = 5; // Reduced from 10 to 5 for 60 FPS
-                this.confidenceThreshold = 0.7; // Higher confidence requirement
+                this.confidenceThreshold = 0.5; // Lowered for better detection
                 this.smoothingFactor = 0.3; // Temporal smoothing
                 this.jointValidationFrames = 2; // Reduced from 3 to 2 for 60 FPS
                 this.jointValidationHistory = {
@@ -571,6 +572,7 @@
                 this.fpsUpdateInterval = 1000; // Update FPS display every second
                 this.lastFpsUpdate = 0;
                 this.isProcessing = false; // Prevent overlapping processing
+                this.debugMode = false; // Debug mode for joint detection
                 
                 // Session tracking
                 this.sessionStart = null;
@@ -584,6 +586,7 @@
                 document.getElementById('startBtn').addEventListener('click', () => this.startCamera());
                 document.getElementById('calibrateBtn').addEventListener('click', () => this.startManualCalibration());
                 document.getElementById('lockCalibrationBtn').addEventListener('click', () => this.lockStrikeZone());
+                document.getElementById('debugBtn').addEventListener('click', () => this.toggleDebugMode());
                 document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
                 document.getElementById('setPlayerBtn').addEventListener('click', () => this.setPlayerName());
                 
@@ -636,6 +639,7 @@
                     
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('calibrateBtn').disabled = false;
+                    document.getElementById('debugBtn').disabled = false;
                     this.updateStatus('Camera started! Position player in frame for calibration.');
                     
                 } catch (error) {
@@ -1069,6 +1073,12 @@
                     
                     // Draw individual landmarks with higher visibility
                     this.drawLandmarks(results.poseLandmarks, '#FF0000', 4);
+                    
+                    // Draw key joints with special highlighting
+                    this.drawKeyJoints(results.poseLandmarks);
+                    
+                    // Draw all landmarks in debug mode
+                    this.drawAllLandmarks(results.poseLandmarks);
                 }
                 
                 // Draw manually selected joints if in calibration mode
@@ -1095,6 +1105,12 @@
                     
                     // Draw individual landmarks
                     this.drawLandmarks(results.poseLandmarks);
+                    
+                    // Draw key joints with special highlighting
+                    this.drawKeyJoints(results.poseLandmarks);
+                    
+                    // Draw all landmarks in debug mode
+                    this.drawAllLandmarks(results.poseLandmarks);
                 }
                 
                 // Draw manually selected joints if in calibration mode
@@ -1279,6 +1295,55 @@
                                 y - 8
                             );
                         }
+                    }
+                });
+            }
+            
+            // Draw key joints with special highlighting for calibration
+            drawKeyJoints(landmarks) {
+                const keyJoints = [
+                    { index: 11, name: 'L Shoulder', color: '#FF6B6B' },
+                    { index: 12, name: 'R Shoulder', color: '#4ECDC4' },
+                    { index: 23, name: 'L Hip', color: '#45B7D1' },
+                    { index: 24, name: 'R Hip', color: '#96CEB4' }
+                ];
+                
+                keyJoints.forEach(joint => {
+                    const landmark = landmarks[joint.index];
+                    if (landmark) {
+                        const x = landmark.x * this.canvas.width;
+                        const y = landmark.y * this.canvas.height;
+                        
+                        // Draw large circle for key joints
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 12, 0, 2 * Math.PI);
+                        this.ctx.strokeStyle = joint.color;
+                        this.ctx.lineWidth = 3;
+                        this.ctx.stroke();
+                        
+                        // Draw inner circle
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 6, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = joint.color;
+                        this.ctx.fill();
+                        
+                        // Draw label with background
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                        this.ctx.fillRect(x - 25, y - 25, 50, 16);
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.font = 'bold 12px Arial';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(joint.name, x, y - 12);
+                        this.ctx.textAlign = 'left';
+                        
+                        // Show confidence
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.font = '10px Arial';
+                        this.ctx.fillText(
+                            `${Math.round(landmark.visibility * 100)}%`, 
+                            x - 20, 
+                            y + 20
+                        );
                     }
                 });
             }
@@ -1908,6 +1973,41 @@
                 document.getElementById('trackingQualityBar').style.background = 
                     `linear-gradient(90deg, ${color}, ${color}dd)`;
             }
+            
+            toggleDebugMode() {
+                this.debugMode = !this.debugMode;
+                const debugBtn = document.getElementById('debugBtn');
+                debugBtn.textContent = this.debugMode ? 'Exit Debug' : 'Debug Mode';
+                debugBtn.style.background = this.debugMode ? 
+                    'linear-gradient(45deg, #FF9800, #F57C00)' : 
+                    'linear-gradient(45deg, #4CAF50, #45a049)';
+                
+                this.updateStatus(this.debugMode ? 
+                    'Debug mode ON - All landmarks visible' : 
+                    'Debug mode OFF - Normal view');
+            }
+            
+            drawAllLandmarks(landmarks) {
+                if (!this.debugMode) return;
+                
+                landmarks.forEach((landmark, index) => {
+                    if (landmark) {
+                        const x = landmark.x * this.canvas.width;
+                        const y = landmark.y * this.canvas.height;
+                        
+                        // Draw all landmarks in debug mode
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.fill();
+                        
+                        // Show landmark index
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.font = '8px Arial';
+                        this.ctx.fillText(index.toString(), x + 3, y - 3);
+                    }
+                });
+            }
         }
         
         // Initialize the tracker when page loads
@@ -1927,5 +2027,6 @@
     </script>
 </body>
 </html>
+
 
 
