@@ -389,6 +389,7 @@
             <div class="controls">
                 <button id="startBtn">Start Camera</button>
                 <button id="calibrateBtn" disabled>Manual Calibration</button>
+                <button id="autoCalibrateBtn" disabled>Auto Calibrate</button>
                 <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
                 <button id="adjustBtn" disabled>Adjust Position</button>
                 <button id="debugBtn" disabled>Debug Mode</button>
@@ -553,7 +554,7 @@
                 // Advanced tracking accuracy improvements (optimized for 60 FPS)
                 this.landmarkHistory = []; // Store last 5 frames for smoothing (reduced for speed)
                 this.maxHistoryFrames = 5; // Reduced from 10 to 5 for 60 FPS
-                this.confidenceThreshold = 0.5; // Lowered for better detection
+                this.confidenceThreshold = 0.7; // High confidence for accurate tracking
                 this.smoothingFactor = 0.3; // Temporal smoothing
                 this.jointValidationFrames = 2; // Reduced from 3 to 2 for 60 FPS
                 this.jointValidationHistory = {
@@ -585,6 +586,7 @@
             initializeElements() {
                 document.getElementById('startBtn').addEventListener('click', () => this.startCamera());
                 document.getElementById('calibrateBtn').addEventListener('click', () => this.startManualCalibration());
+                document.getElementById('autoCalibrateBtn').addEventListener('click', () => this.startAutoCalibration());
                 document.getElementById('lockCalibrationBtn').addEventListener('click', () => this.lockStrikeZone());
                 document.getElementById('debugBtn').addEventListener('click', () => this.toggleDebugMode());
                 document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
@@ -639,6 +641,7 @@
                     
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('calibrateBtn').disabled = false;
+                    document.getElementById('autoCalibrateBtn').disabled = false;
                     document.getElementById('debugBtn').disabled = false;
                     this.updateStatus('Camera started! Position player in frame for calibration.');
                     
@@ -1310,40 +1313,80 @@
                 
                 keyJoints.forEach(joint => {
                     const landmark = landmarks[joint.index];
-                    if (landmark) {
+                    if (landmark && landmark.visibility > 0.3) {
                         const x = landmark.x * this.canvas.width;
                         const y = landmark.y * this.canvas.height;
                         
+                        // Determine if joint meets confidence threshold
+                        const isHighConfidence = landmark.visibility > this.confidenceThreshold;
+                        const circleColor = isHighConfidence ? joint.color : '#666666';
+                        const circleSize = isHighConfidence ? 15 : 10;
+                        
+                        // Draw pulsing outer ring for high confidence joints
+                        if (isHighConfidence) {
+                            this.ctx.beginPath();
+                            this.ctx.arc(x, y, circleSize + 5, 0, 2 * Math.PI);
+                            this.ctx.strokeStyle = circleColor;
+                            this.ctx.lineWidth = 2;
+                            this.ctx.setLineDash([5, 5]);
+                            this.ctx.stroke();
+                            this.ctx.setLineDash([]);
+                        }
+                        
                         // Draw large circle for key joints
                         this.ctx.beginPath();
-                        this.ctx.arc(x, y, 12, 0, 2 * Math.PI);
-                        this.ctx.strokeStyle = joint.color;
-                        this.ctx.lineWidth = 3;
+                        this.ctx.arc(x, y, circleSize, 0, 2 * Math.PI);
+                        this.ctx.strokeStyle = circleColor;
+                        this.ctx.lineWidth = 4;
                         this.ctx.stroke();
                         
                         // Draw inner circle
                         this.ctx.beginPath();
-                        this.ctx.arc(x, y, 6, 0, 2 * Math.PI);
-                        this.ctx.fillStyle = joint.color;
+                        this.ctx.arc(x, y, circleSize - 4, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = circleColor;
+                        this.ctx.fill();
+                        
+                        // Draw white center dot
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = '#FFFFFF';
                         this.ctx.fill();
                         
                         // Draw label with background
-                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                        this.ctx.fillRect(x - 25, y - 25, 50, 16);
-                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                        this.ctx.fillRect(x - 30, y - 30, 60, 18);
+                        this.ctx.fillStyle = isHighConfidence ? '#FFFFFF' : '#FFAAAA';
                         this.ctx.font = 'bold 12px Arial';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(joint.name, x, y - 18);
+                        this.ctx.textAlign = 'left';
+                        
+                        // Show confidence with color coding
+                        this.ctx.fillStyle = isHighConfidence ? '#00FF00' : '#FF0000';
+                        this.ctx.font = 'bold 10px Arial';
+                        this.ctx.fillText(
+                            `${Math.round(landmark.visibility * 100)}%`, 
+                            x - 25, 
+                            y + 25
+                        );
+                    } else if (landmark) {
+                        // Show low confidence joints in gray
+                        const x = landmark.x * this.canvas.width;
+                        const y = landmark.y * this.canvas.height;
+                        
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                        this.ctx.strokeStyle = '#666666';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                        
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                        this.ctx.fillRect(x - 20, y - 20, 40, 14);
+                        this.ctx.fillStyle = '#AAAAAA';
+                        this.ctx.font = '10px Arial';
                         this.ctx.textAlign = 'center';
                         this.ctx.fillText(joint.name, x, y - 12);
                         this.ctx.textAlign = 'left';
-                        
-                        // Show confidence
-                        this.ctx.fillStyle = '#FFFFFF';
-                        this.ctx.font = '10px Arial';
-                        this.ctx.fillText(
-                            `${Math.round(landmark.visibility * 100)}%`, 
-                            x - 20, 
-                            y + 20
-                        );
                     }
                 });
             }
@@ -1671,8 +1714,10 @@
             }
             
             startManualCalibration() {
+                console.log('Starting manual calibration...');
                 this.manualCalibrationMode = true;
                 this.isCalibrated = false;
+                this.calibrationInProgress = false; // Disable automatic calibration
                 this.selectedJoints = {
                     leftShoulder: null,
                     rightShoulder: null,
@@ -1683,29 +1728,50 @@
                 document.getElementById('calibrationStatus').style.display = 'block';
                 document.getElementById('calibrationText').textContent = 'Click on joints to select them';
                 document.getElementById('lockCalibrationBtn').disabled = false;
+                console.log('Manual calibration mode enabled');
+            }
+            
+            startAutoCalibration() {
+                console.log('Starting auto calibration...');
+                this.manualCalibrationMode = false;
+                this.calibrationInProgress = true;
+                this.isCalibrated = false;
+                this.updateStatus('Auto Calibration: Stand still and ensure shoulders/hips are visible. Looking for joints...');
+                document.getElementById('calibrationStatus').style.display = 'block';
+                document.getElementById('calibrationText').textContent = 'Detecting joints automatically...';
+                console.log('Auto calibration mode enabled');
             }
             
             handleCanvasClick(e) {
-                if (!this.manualCalibrationMode) return;
+                console.log('Canvas clicked, manual calibration mode:', this.manualCalibrationMode);
+                if (!this.manualCalibrationMode) {
+                    console.log('Manual calibration mode is OFF, ignoring click');
+                    return;
+                }
                 
                 const rect = this.canvas.getBoundingClientRect();
                 const x = (e.clientX - rect.left) / rect.width;
                 const y = (e.clientY - rect.top) / rect.height;
                 
                 const clickPoint = { x, y };
+                console.log('Click point:', clickPoint);
                 
                 // Determine which joint to select next
                 if (!this.selectedJoints.leftShoulder) {
                     this.selectedJoints.leftShoulder = clickPoint;
+                    console.log('Left shoulder selected:', clickPoint);
                     this.updateStatus('Left shoulder selected. Now click on right shoulder.');
                 } else if (!this.selectedJoints.rightShoulder) {
                     this.selectedJoints.rightShoulder = clickPoint;
+                    console.log('Right shoulder selected:', clickPoint);
                     this.updateStatus('Right shoulder selected. Now click on left hip.');
                 } else if (!this.selectedJoints.leftHip) {
                     this.selectedJoints.leftHip = clickPoint;
+                    console.log('Left hip selected:', clickPoint);
                     this.updateStatus('Left hip selected. Now click on right hip.');
                 } else if (!this.selectedJoints.rightHip) {
                     this.selectedJoints.rightHip = clickPoint;
+                    console.log('Right hip selected:', clickPoint);
                     this.updateStatus('All joints selected! Click "Lock Strike Zone" to finish.');
                 }
             }
@@ -2027,6 +2093,7 @@
     </script>
 </body>
 </html>
+
 
 
 
