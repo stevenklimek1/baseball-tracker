@@ -389,6 +389,7 @@ tml>
                 <button id="startBtn">Start Camera</button>
                 <button id="calibrateBtn" disabled>Manual Calibration</button>
                 <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
+                <button id="adjustBtn" disabled>Adjust Position</button>
                 <button id="resetBtn" class="reset-btn">Reset Statistics</button>
             </div>
             
@@ -403,9 +404,11 @@ tml>
                     <li>Position player in frame with shoulders and hips visible</li>
                     <li>Click "Manual Calibration" to start joint selection</li>
                     <li>Click on left shoulder, right shoulder, left hip, right hip</li>
-                    <li>Click "Lock Strike Zone" when all 4 joints are selected</li>
+                    <li><strong>Use arrow keys</strong> to fine-tune joint positions</li>
+                    <li>Click "Lock Strike Zone" when all 4 joints are positioned correctly</li>
                     <li>Start throwing baseballs to track accuracy</li>
                 </ol>
+                <p><strong>Precision Tips:</strong> Use arrow keys (↑↓←→) to adjust the last selected joint by small amounts for perfect alignment.</p>
             </div>
             
             <div class="calibration-status" id="calibrationStatus" style="display: none;">
@@ -543,6 +546,9 @@ tml>
                 
                 // Add click listener for manual joint selection
                 this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+                
+                // Add keyboard controls for precision adjustment
+                document.addEventListener('keydown', (e) => this.handleKeyPress(e));
             }
             
             async startCamera() {
@@ -720,21 +726,80 @@ tml>
                         const x = joint.point.x * this.canvas.width;
                         const y = joint.point.y * this.canvas.height;
                         
+                        // Draw precision crosshair
+                        this.ctx.strokeStyle = joint.color;
+                        this.ctx.lineWidth = 2;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(x - 10, y);
+                        this.ctx.lineTo(x + 10, y);
+                        this.ctx.moveTo(x, y - 10);
+                        this.ctx.lineTo(x, y + 10);
+                        this.ctx.stroke();
+                        
                         // Draw joint circle
                         this.ctx.beginPath();
-                        this.ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                        this.ctx.arc(x, y, 6, 0, 2 * Math.PI);
                         this.ctx.fillStyle = joint.color;
                         this.ctx.fill();
                         this.ctx.strokeStyle = '#FFFFFF';
                         this.ctx.lineWidth = 2;
                         this.ctx.stroke();
                         
-                        // Draw label
+                        // Draw label with background
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                        this.ctx.fillRect(x + 8, y - 20, 60, 16);
                         this.ctx.fillStyle = '#FFFFFF';
-                        this.ctx.font = '12px Arial';
+                        this.ctx.font = 'bold 11px Arial';
                         this.ctx.fillText(joint.label, x + 12, y - 8);
                     }
                 });
+                
+                // Draw preview strike zone if all joints are selected
+                if (this.selectedJoints.leftShoulder && this.selectedJoints.rightShoulder && 
+                    this.selectedJoints.leftHip && this.selectedJoints.rightHip) {
+                    this.drawPreviewStrikeZone();
+                }
+            }
+            
+            drawPreviewStrikeZone() {
+                const shoulderCenter = {
+                    x: (this.selectedJoints.leftShoulder.x + this.selectedJoints.rightShoulder.x) / 2,
+                    y: (this.selectedJoints.leftShoulder.y + this.selectedJoints.rightShoulder.y) / 2
+                };
+                
+                const hipCenter = {
+                    x: (this.selectedJoints.leftHip.x + this.selectedJoints.rightHip.x) / 2,
+                    y: (this.selectedJoints.leftHip.y + this.selectedJoints.rightHip.y) / 2
+                };
+                
+                const shoulderWidth = Math.abs(this.selectedJoints.rightShoulder.x - this.selectedJoints.leftShoulder.x);
+                const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
+                
+                const previewZone = {
+                    center: {
+                        x: (shoulderCenter.x + hipCenter.x) / 2,
+                        y: (shoulderCenter.y + hipCenter.y) / 2
+                    },
+                    width: Math.min(0.15, Math.max(0.05, shoulderWidth * 1.2)),
+                    height: Math.max(0.1, bodyHeight * 0.65)
+                };
+                
+                const x = (previewZone.center.x - previewZone.width / 2) * this.canvas.width;
+                const y = (previewZone.center.y - previewZone.height / 2) * this.canvas.height;
+                const width = previewZone.width * this.canvas.width;
+                const height = previewZone.height * this.canvas.height;
+                
+                // Draw preview strike zone
+                this.ctx.strokeStyle = '#00FF00';
+                this.ctx.lineWidth = 2;
+                this.ctx.setLineDash([5, 5]); // Dashed line for preview
+                this.ctx.strokeRect(x, y, width, height);
+                this.ctx.setLineDash([]); // Reset line dash
+                
+                // Add preview label
+                this.ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                this.ctx.font = 'bold 14px Arial';
+                this.ctx.fillText('PREVIEW STRIKE ZONE', x, y - 10);
             }
             
             drawLandmarks(landmarks) {
@@ -1109,6 +1174,66 @@ tml>
                 } else if (!this.selectedJoints.rightHip) {
                     this.selectedJoints.rightHip = clickPoint;
                     this.updateStatus('All joints selected! Click "Lock Strike Zone" to finish.');
+                }
+            }
+            
+            // Add precision adjustment methods
+            adjustJointPosition(jointName, direction) {
+                if (!this.selectedJoints[jointName]) return;
+                
+                const adjustment = 0.005; // Fine adjustment amount
+                
+                switch (direction) {
+                    case 'up':
+                        this.selectedJoints[jointName].y -= adjustment;
+                        break;
+                    case 'down':
+                        this.selectedJoints[jointName].y += adjustment;
+                        break;
+                    case 'left':
+                        this.selectedJoints[jointName].x -= adjustment;
+                        break;
+                    case 'right':
+                        this.selectedJoints[jointName].x += adjustment;
+                        break;
+                }
+                
+                // Clamp values to stay within bounds
+                this.selectedJoints[jointName].x = Math.max(0, Math.min(1, this.selectedJoints[jointName].x));
+                this.selectedJoints[jointName].y = Math.max(0, Math.min(1, this.selectedJoints[jointName].y));
+                
+                this.updateStatus(`Adjusted ${jointName}. Use arrow keys for fine-tuning.`);
+            }
+            
+            handleKeyPress(e) {
+                if (!this.manualCalibrationMode) return;
+                
+                // Find the last selected joint for adjustment
+                let currentJoint = null;
+                if (this.selectedJoints.rightHip) currentJoint = 'rightHip';
+                else if (this.selectedJoints.leftHip) currentJoint = 'leftHip';
+                else if (this.selectedJoints.rightShoulder) currentJoint = 'rightShoulder';
+                else if (this.selectedJoints.leftShoulder) currentJoint = 'leftShoulder';
+                
+                if (!currentJoint) return;
+                
+                switch (e.key) {
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.adjustJointPosition(currentJoint, 'up');
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.adjustJointPosition(currentJoint, 'down');
+                        break;
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        this.adjustJointPosition(currentJoint, 'left');
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        this.adjustJointPosition(currentJoint, 'right');
+                        break;
                 }
             }
             
