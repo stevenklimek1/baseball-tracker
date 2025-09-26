@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+tml>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -387,7 +387,8 @@
             
             <div class="controls">
                 <button id="startBtn">Start Camera</button>
-                <button id="calibrateBtn" disabled>Calibrate Strike Zone</button>
+                <button id="calibrateBtn" disabled>Manual Calibration</button>
+                <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
                 <button id="resetBtn" class="reset-btn">Reset Statistics</button>
             </div>
             
@@ -400,7 +401,9 @@
                 <ol>
                     <li>Click "Start Camera" and allow camera access</li>
                     <li>Position player in frame with shoulders and hips visible</li>
-                    <li>Click "Calibrate Strike Zone" when ready</li>
+                    <li>Click "Manual Calibration" to start joint selection</li>
+                    <li>Click on left shoulder, right shoulder, left hip, right hip</li>
+                    <li>Click "Lock Strike Zone" when all 4 joints are selected</li>
                     <li>Start throwing baseballs to track accuracy</li>
                 </ol>
             </div>
@@ -505,6 +508,13 @@
                 // Calibration
                 this.isCalibrated = false;
                 this.calibrationInProgress = false;
+                this.manualCalibrationMode = false;
+                this.selectedJoints = {
+                    leftShoulder: null,
+                    rightShoulder: null,
+                    leftHip: null,
+                    rightHip: null
+                };
                 this.strikeZone = null;
                 this.pose = null;
                 this.model = null;
@@ -519,7 +529,8 @@
             
             initializeElements() {
                 document.getElementById('startBtn').addEventListener('click', () => this.startCamera());
-                document.getElementById('calibrateBtn').addEventListener('click', () => this.startCalibration());
+                document.getElementById('calibrateBtn').addEventListener('click', () => this.startManualCalibration());
+                document.getElementById('lockCalibrationBtn').addEventListener('click', () => this.lockStrikeZone());
                 document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
                 document.getElementById('setPlayerBtn').addEventListener('click', () => this.setPlayerName());
                 
@@ -529,6 +540,9 @@
                         this.setPlayerName();
                     }
                 });
+                
+                // Add click listener for manual joint selection
+                this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
             }
             
             async startCamera() {
@@ -677,15 +691,50 @@
                     
                     // Draw individual landmarks
                     this.drawLandmarks(results.poseLandmarks);
-                    
-                    // Draw strike zone if calibrated
-                    if (this.isCalibrated && this.strikeZone) {
-                        this.drawStrikeZone();
-                    }
+                }
+                
+                // Draw manually selected joints if in calibration mode
+                if (this.manualCalibrationMode) {
+                    this.drawSelectedJoints();
+                }
+                
+                // Draw strike zone if calibrated
+                if (this.isCalibrated && this.strikeZone) {
+                    this.drawStrikeZone();
                 }
                 
                 // Detect and track baseball
                 this.detectBaseball();
+            }
+            
+            drawSelectedJoints() {
+                const joints = [
+                    { point: this.selectedJoints.leftShoulder, label: 'L Shoulder', color: '#FF6B6B' },
+                    { point: this.selectedJoints.rightShoulder, label: 'R Shoulder', color: '#4ECDC4' },
+                    { point: this.selectedJoints.leftHip, label: 'L Hip', color: '#45B7D1' },
+                    { point: this.selectedJoints.rightHip, label: 'R Hip', color: '#96CEB4' }
+                ];
+                
+                joints.forEach((joint, index) => {
+                    if (joint.point) {
+                        const x = joint.point.x * this.canvas.width;
+                        const y = joint.point.y * this.canvas.height;
+                        
+                        // Draw joint circle
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                        this.ctx.fillStyle = joint.color;
+                        this.ctx.fill();
+                        this.ctx.strokeStyle = '#FFFFFF';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                        
+                        // Draw label
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.font = '12px Arial';
+                        this.ctx.fillText(joint.label, x + 12, y - 8);
+                    }
+                });
             }
             
             drawLandmarks(landmarks) {
@@ -1023,12 +1072,82 @@
                     (this.stats.strikes / this.stats.totalThrows * 100).toFixed(1) + '%' : '0%';
             }
             
-            startCalibration() {
-                this.calibrationInProgress = true;
+            startManualCalibration() {
+                this.manualCalibrationMode = true;
                 this.isCalibrated = false;
-                this.updateStatus('Calibrating... Position player in frame with shoulders and hips visible.');
+                this.selectedJoints = {
+                    leftShoulder: null,
+                    rightShoulder: null,
+                    leftHip: null,
+                    rightHip: null
+                };
+                this.updateStatus('Manual Calibration: Click on left shoulder, right shoulder, left hip, right hip in order.');
                 document.getElementById('calibrationStatus').style.display = 'block';
-                document.getElementById('calibrationText').textContent = 'Calibrating...';
+                document.getElementById('calibrationText').textContent = 'Click on joints to select them';
+                document.getElementById('lockCalibrationBtn').disabled = false;
+            }
+            
+            handleCanvasClick(e) {
+                if (!this.manualCalibrationMode) return;
+                
+                const rect = this.canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width;
+                const y = (e.clientY - rect.top) / rect.height;
+                
+                const clickPoint = { x, y };
+                
+                // Determine which joint to select next
+                if (!this.selectedJoints.leftShoulder) {
+                    this.selectedJoints.leftShoulder = clickPoint;
+                    this.updateStatus('Left shoulder selected. Now click on right shoulder.');
+                } else if (!this.selectedJoints.rightShoulder) {
+                    this.selectedJoints.rightShoulder = clickPoint;
+                    this.updateStatus('Right shoulder selected. Now click on left hip.');
+                } else if (!this.selectedJoints.leftHip) {
+                    this.selectedJoints.leftHip = clickPoint;
+                    this.updateStatus('Left hip selected. Now click on right hip.');
+                } else if (!this.selectedJoints.rightHip) {
+                    this.selectedJoints.rightHip = clickPoint;
+                    this.updateStatus('All joints selected! Click "Lock Strike Zone" to finish.');
+                }
+            }
+            
+            lockStrikeZone() {
+                if (!this.selectedJoints.leftShoulder || !this.selectedJoints.rightShoulder || 
+                    !this.selectedJoints.leftHip || !this.selectedJoints.rightHip) {
+                    this.updateStatus('Please select all 4 joints before locking.');
+                    return;
+                }
+                
+                // Calculate strike zone from selected joints
+                const shoulderCenter = {
+                    x: (this.selectedJoints.leftShoulder.x + this.selectedJoints.rightShoulder.x) / 2,
+                    y: (this.selectedJoints.leftShoulder.y + this.selectedJoints.rightShoulder.y) / 2
+                };
+                
+                const hipCenter = {
+                    x: (this.selectedJoints.leftHip.x + this.selectedJoints.rightHip.x) / 2,
+                    y: (this.selectedJoints.leftHip.y + this.selectedJoints.rightHip.y) / 2
+                };
+                
+                const shoulderWidth = Math.abs(this.selectedJoints.rightShoulder.x - this.selectedJoints.leftShoulder.x);
+                const bodyHeight = Math.abs(shoulderCenter.y - hipCenter.y);
+                
+                this.strikeZone = {
+                    center: {
+                        x: (shoulderCenter.x + hipCenter.x) / 2,
+                        y: (shoulderCenter.y + hipCenter.y) / 2
+                    },
+                    width: Math.min(0.15, Math.max(0.05, shoulderWidth * 1.2)),
+                    height: Math.max(0.1, bodyHeight * 0.65)
+                };
+                
+                this.isCalibrated = true;
+                this.manualCalibrationMode = false;
+                this.updateStatus('Strike zone locked! Ready to track throws.');
+                document.getElementById('calibrationStatus').style.display = 'block';
+                document.getElementById('calibrationText').textContent = 'Strike zone calibrated successfully';
+                document.getElementById('lockCalibrationBtn').disabled = true;
             }
             
             resetStatistics() {
@@ -1045,8 +1164,16 @@
                 
                 this.isCalibrated = false;
                 this.calibrationInProgress = false;
+                this.manualCalibrationMode = false;
+                this.selectedJoints = {
+                    leftShoulder: null,
+                    rightShoulder: null,
+                    leftHip: null,
+                    rightHip: null
+                };
                 this.strikeZone = null;
                 this.sessionStart = null;
+                document.getElementById('lockCalibrationBtn').disabled = true;
                 this.updateUI();
                 this.updateStatus('Statistics reset. Ready for new session.');
             }
@@ -1071,5 +1198,3 @@
             [28, 32]
         ];
     </script>
-</body>
-</html>
