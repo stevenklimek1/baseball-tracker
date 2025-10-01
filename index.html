@@ -1,9 +1,15 @@
+
+
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Baseball Tracker 3D - Web Version</title>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -110,6 +116,16 @@
             position: relative;
             display: inline-block;
             width: 100%;
+        }
+        
+        #threeContainer {
+            width: 100%;
+            height: 480px;
+            margin-top: 12px;
+            border: 3px solid #2196F3;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            display: none;
         }
         
         .controls {
@@ -375,6 +391,8 @@
                 <canvas id="canvas"></canvas>
             </div>
             
+            <div id="threeContainer"></div>
+            
             <div class="player-info">
                 <h3>👤 Player Information</h3>
                 <div class="player-input">
@@ -393,6 +411,8 @@
                 <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
                 <button id="adjustBtn" disabled>Adjust Position</button>
                 <button id="debugBtn" disabled>Debug Mode</button>
+                <button id="toggle3DBtn" disabled>3D View</button>
+                <button id="startArBtn" disabled>Start AR</button>
                 <button id="resetBtn" class="reset-btn">Reset Statistics</button>
             </div>
             
@@ -520,6 +540,7 @@
                 this.video = document.getElementById('video');
                 this.canvas = document.getElementById('canvas');
                 this.ctx = this.canvas.getContext('2d');
+                this.threeContainer = document.getElementById('threeContainer');
                 
                 // Statistics
                 this.stats = {
@@ -575,6 +596,16 @@
                 this.isProcessing = false; // Prevent overlapping processing
                 this.debugMode = false; // Debug mode for joint detection
                 
+                // 3D state
+                this.is3DEnabled = false;
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.strikeZoneMesh = null;
+                this.ballMesh = null;
+                this.animationId = null;
+                this.unitScaleFeetPerMeter = 1.0; // 1.0 in non-AR; 3.28084 in AR
+                
                 // Session tracking
                 this.sessionStart = null;
                 this.lastThrowTime = 0;
@@ -591,6 +622,8 @@
                 document.getElementById('debugBtn').addEventListener('click', () => this.toggleDebugMode());
                 document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
                 document.getElementById('setPlayerBtn').addEventListener('click', () => this.setPlayerName());
+                document.getElementById('toggle3DBtn').addEventListener('click', () => this.toggle3D());
+                document.getElementById('startArBtn').addEventListener('click', () => this.startAR());
                 
                 // Allow Enter key to set player name
                 document.getElementById('playerNameInput').addEventListener('keypress', (e) => {
@@ -624,6 +657,7 @@
                         this.canvas.width = this.video.videoWidth;
                         this.canvas.height = this.video.videoHeight;
                         console.log('Video metadata loaded');
+                        this.initialize3D();
                     };
                     
                     // Initialize pose detection
@@ -643,6 +677,8 @@
                     document.getElementById('calibrateBtn').disabled = false;
                     document.getElementById('autoCalibrateBtn').disabled = false;
                     document.getElementById('debugBtn').disabled = false;
+                    document.getElementById('toggle3DBtn').disabled = false;
+                    this.setupWebXRSupport();
                     this.updateStatus('Camera started! Position player in frame for calibration.');
                     
                 } catch (error) {
@@ -1092,6 +1128,7 @@
                 // Draw strike zone if calibrated
                 if (this.isCalibrated && this.strikeZone) {
                     this.drawStrikeZone();
+                    if (this.is3DEnabled) this.update3DStrikeZone();
                 }
                 
                 // Detect and track baseball
@@ -1124,6 +1161,7 @@
                 // Draw strike zone if calibrated
                 if (this.isCalibrated && this.strikeZone) {
                     this.drawStrikeZone();
+                    if (this.is3DEnabled) this.update3DStrikeZone();
                 }
                 
                 // Detect and track baseball
@@ -1423,6 +1461,119 @@
                 this.ctx.font = '16px Arial';
                 this.ctx.fillText('STRIKE ZONE', x, y - 10);
             }
+
+            // === 3D: Initialization and helpers ===
+            initialize3D() {
+                if (this.renderer || typeof THREE === 'undefined') return;
+                const width = this.video.videoWidth || this.canvas.width || 640;
+                const height = this.video.videoHeight || this.canvas.height || 480;
+                
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 2000);
+                this.camera.position.set(0, 0, 200);
+                this.camera.lookAt(0, 0, 0);
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer.setSize(width, height);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+                this.threeContainer.appendChild(this.renderer.domElement);
+                
+                const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+                this.scene.add(ambient);
+                
+                // Strike zone wireframe
+                const zoneGeom = new THREE.BoxGeometry(10, 10, 2);
+                const zoneMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                this.strikeZoneMesh = new THREE.Mesh(zoneGeom, zoneMat);
+                this.strikeZoneMesh.visible = false;
+                this.scene.add(this.strikeZoneMesh);
+                
+                // Baseball sphere (~0.12 ft radius)
+                const ballGeom = new THREE.SphereGeometry(0.12, 24, 24);
+                const ballMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                this.ballMesh = new THREE.Mesh(ballGeom, ballMat);
+                this.ballMesh.visible = false;
+                this.scene.add(this.ballMesh);
+                
+                window.addEventListener('resize', () => this.on3DResize());
+            }
+
+            toggle3D() {
+                this.is3DEnabled = !this.is3DEnabled;
+                const btn = document.getElementById('toggle3DBtn');
+                btn.textContent = this.is3DEnabled ? '2D View' : '3D View';
+                this.threeContainer.style.display = this.is3DEnabled ? 'block' : 'none';
+                this.canvas.style.display = this.is3DEnabled ? 'none' : 'block';
+                if (this.is3DEnabled) {
+                    if (!this.renderer) this.initialize3D();
+                    this.start3DRenderLoop();
+                    if (this.isCalibrated) this.update3DStrikeZone();
+                } else {
+                    this.stop3DRenderLoop();
+                }
+            }
+
+            start3DRenderLoop() {
+                if (!this.renderer) return;
+                const animate = () => {
+                    this.animationId = requestAnimationFrame(animate);
+                    this.renderer.render(this.scene, this.camera);
+                };
+                animate();
+            }
+
+            stop3DRenderLoop() {
+                if (this.animationId) cancelAnimationFrame(this.animationId);
+                this.animationId = null;
+            }
+
+            on3DResize() {
+                if (!this.renderer || !this.camera) return;
+                const rect = this.threeContainer.getBoundingClientRect();
+                const width = rect.width || this.canvas.width;
+                const height = rect.height || this.canvas.height;
+                this.camera.aspect = width / height;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(width, height);
+            }
+
+            normalizedToWorld(nx, ny, z) {
+                const ndcX = nx * 2 - 1;
+                const ndcY = -(ny * 2 - 1);
+                const distance = Math.abs(z - this.camera.position.z);
+                const halfHeight = Math.tan((this.camera.fov * Math.PI) / 360) * distance;
+                const halfWidth = halfHeight * this.camera.aspect;
+                return { x: ndcX * halfWidth, y: ndcY * halfHeight, z };
+            }
+
+            frustumSizeAtZ(z) {
+                const distance = Math.abs(z - this.camera.position.z);
+                const halfHeight = Math.tan((this.camera.fov * Math.PI) / 360) * distance;
+                const halfWidth = halfHeight * this.camera.aspect;
+                return { width: halfWidth * 2, height: halfHeight * 2 };
+            }
+
+            update3DStrikeZone() {
+                if (!this.strikeZone || !this.strikeZoneMesh || !this.camera) return;
+                const z = -100; // nominal plane depth
+                const sizeAtZ = this.frustumSizeAtZ(z);
+                const center = this.normalizedToWorld(this.strikeZone.center.x, this.strikeZone.center.y, z);
+                this.strikeZoneMesh.position.set(center.x, center.y, center.z);
+                this.strikeZoneMesh.scale.set(
+                    Math.max(0.1, this.strikeZone.width * sizeAtZ.width) / 10,
+                    Math.max(0.1, this.strikeZone.height * sizeAtZ.height) / 10,
+                    1
+                );
+                this.strikeZoneMesh.visible = true;
+            }
+
+            update3DBall(nx, ny, depthFeet) {
+                if (!this.ballMesh || !this.camera) return;
+                const z = -Math.max(1, depthFeet);
+                const pos = this.normalizedToWorld(nx, ny, z);
+                this.ballMesh.position.set(pos.x, pos.y, pos.z);
+                this.ballMesh.visible = true;
+            }
             
             async detectBaseball() {
                 if (!this.model || !this.isCalibrated) return;
@@ -1602,8 +1753,15 @@
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
                 
-                // Draw 3D depth information
+                // Draw 3D depth information and update 3D ball if enabled
+                const ballSize = Math.max(this.currentBallSize || 50, 50);
+                const depth = this.calculate3DDepth(ballSize);
                 this.draw3DDepthInfo(center);
+                if (this.is3DEnabled) {
+                    const nx = center.x / this.canvas.width;
+                    const ny = center.y / this.canvas.height;
+                    this.update3DBall(nx, ny, depth);
+                }
             }
             
             draw3DDepthInfo(center) {
@@ -2052,6 +2210,98 @@
                     'Debug mode ON - All landmarks visible' : 
                     'Debug mode OFF - Normal view');
             }
+
+            // === WebXR AR integration ===
+            async setupWebXRSupport() {
+                try {
+                    const supported = navigator.xr && await navigator.xr.isSessionSupported('immersive-ar');
+                    document.getElementById('startArBtn').disabled = !supported;
+                } catch (e) {
+                    document.getElementById('startArBtn').disabled = true;
+                }
+            }
+
+            async startAR() {
+                if (!navigator.xr) {
+                    this.updateStatus('WebXR not available on this device/browser.');
+                    return;
+                }
+                try {
+                    // Hide 2D/3D UIs while in AR
+                    this.canvas.style.display = 'none';
+                    this.threeContainer.style.display = 'none';
+                    
+                    // Ensure Three.js renderer exists and is XR-enabled
+                    if (!this.renderer) this.initialize3D();
+                    this.renderer.xr.enabled = true;
+                    
+                    const sessionInit = {
+                        requiredFeatures: ['hit-test'],
+                        optionalFeatures: ['depth-sensing', 'dom-overlay', 'anchors'],
+                        depthSensing: { usagePreference: [ 'gpu-optimized', 'balanced' ], dataFormatPreference: [ 'luminance-alpha' ] },
+                        domOverlay: { root: document.body }
+                    };
+                    const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+                    this.renderer.xr.setSession(session);
+                    
+                    const gl = this.renderer.getContext();
+                    const xrRefSpace = await session.requestReferenceSpace('local');
+                    const viewerSpace = await session.requestReferenceSpace('viewer');
+                    const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+                    
+                    // Use feet as world units in AR by scaling scene (1 m -> 3.28084 ft)
+                    this.unitScaleFeetPerMeter = 3.28084;
+                    this.scene.scale.set(this.unitScaleFeetPerMeter, this.unitScaleFeetPerMeter, this.unitScaleFeetPerMeter);
+                    
+                    // Place strike zone once on first valid hit
+                    let zonePlaced = false;
+                    const onXRFrame = (time, frame) => {
+                        const pose = frame.getViewerPose(xrRefSpace);
+                        if (!pose) return;
+                        
+                        // Perform forward hit test
+                        const results = frame.getHitTestResults(hitTestSource);
+                        if (!zonePlaced && results.length > 0) {
+                            const hit = results[0];
+                            const hitPose = hit.getPose(xrRefSpace);
+                            if (this.strikeZoneMesh) {
+                                this.strikeZoneMesh.position.set(hitPose.transform.position.x, hitPose.transform.position.y, hitPose.transform.position.z);
+                                this.strikeZoneMesh.scale.set(1, 1, 1);
+                                this.strikeZoneMesh.visible = true;
+                                zonePlaced = true;
+                            }
+                        }
+                        
+                        // Update ball position in meters if we have a normalized 2D spot + estimated depth (convert ft->m)
+                        if (this.ballMesh && this.currentBallPosition && this.stats.currentDepth) {
+                            const nx = this.currentBallPosition.x / this.canvas.width;
+                            const ny = this.currentBallPosition.y / this.canvas.height;
+                            const meters = this.stats.currentDepth * 0.3048;
+                            // Project in front of the viewer along -Z by meters
+                            const pos = new THREE.Vector3(0, 0, -meters).applyMatrix4(this.renderer.xr.getCamera().matrixWorld);
+                            this.ballMesh.position.copy(pos);
+                            this.ballMesh.visible = true;
+                        }
+                        
+                        this.renderer.render(this.scene, this.renderer.xr.getCamera());
+                    };
+                    this.renderer.setAnimationLoop(onXRFrame);
+                    
+                    session.addEventListener('end', () => {
+                        this.renderer.setAnimationLoop(null);
+                        this.renderer.xr.enabled = false;
+                        // Reset unit scaling back to non-AR (feet == world units already)
+                        this.unitScaleFeetPerMeter = 1.0;
+                        this.scene.scale.set(1, 1, 1);
+                        // Restore UI
+                        this.canvas.style.display = this.is3DEnabled ? 'none' : 'block';
+                        this.threeContainer.style.display = this.is3DEnabled ? 'block' : 'none';
+                    });
+                } catch (err) {
+                    console.error(err);
+                    this.updateStatus('Failed to start AR session.');
+                }
+            }
             
             drawAllLandmarks(landmarks) {
                 if (!this.debugMode) return;
@@ -2093,7 +2343,3 @@
     </script>
 </body>
 </html>
-
-
-
-
