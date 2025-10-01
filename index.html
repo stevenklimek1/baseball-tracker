@@ -1,8 +1,3 @@
-
-
-
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -125,7 +120,7 @@
             border: 3px solid #2196F3;
             border-radius: 10px;
             background: rgba(0, 0, 0, 0.2);
-            display: none;
+            display: block;
         }
         
         .controls {
@@ -411,7 +406,6 @@
                 <button id="lockCalibrationBtn" disabled>Lock Strike Zone</button>
                 <button id="adjustBtn" disabled>Adjust Position</button>
                 <button id="debugBtn" disabled>Debug Mode</button>
-                <button id="toggle3DBtn" disabled>3D View</button>
                 <button id="startArBtn" disabled>Start AR</button>
                 <button id="resetBtn" class="reset-btn">Reset Statistics</button>
             </div>
@@ -622,7 +616,6 @@
                 document.getElementById('debugBtn').addEventListener('click', () => this.toggleDebugMode());
                 document.getElementById('resetBtn').addEventListener('click', () => this.resetStatistics());
                 document.getElementById('setPlayerBtn').addEventListener('click', () => this.setPlayerName());
-                document.getElementById('toggle3DBtn').addEventListener('click', () => this.toggle3D());
                 document.getElementById('startArBtn').addEventListener('click', () => this.startAR());
                 
                 // Allow Enter key to set player name
@@ -658,6 +651,11 @@
                         this.canvas.height = this.video.videoHeight;
                         console.log('Video metadata loaded');
                         this.initialize3D();
+                        // Make 3D mandatory: show 3D container and hide 2D canvas, start render loop
+                        this.is3DEnabled = true;
+                        this.threeContainer.style.display = 'block';
+                        this.canvas.style.display = 'none';
+                        this.start3DRenderLoop();
                     };
                     
                     // Initialize pose detection
@@ -677,7 +675,6 @@
                     document.getElementById('calibrateBtn').disabled = false;
                     document.getElementById('autoCalibrateBtn').disabled = false;
                     document.getElementById('debugBtn').disabled = false;
-                    document.getElementById('toggle3DBtn').disabled = false;
                     this.setupWebXRSupport();
                     this.updateStatus('Camera started! Position player in frame for calibration.');
                     
@@ -1498,20 +1495,7 @@
                 window.addEventListener('resize', () => this.on3DResize());
             }
 
-            toggle3D() {
-                this.is3DEnabled = !this.is3DEnabled;
-                const btn = document.getElementById('toggle3DBtn');
-                btn.textContent = this.is3DEnabled ? '2D View' : '3D View';
-                this.threeContainer.style.display = this.is3DEnabled ? 'block' : 'none';
-                this.canvas.style.display = this.is3DEnabled ? 'none' : 'block';
-                if (this.is3DEnabled) {
-                    if (!this.renderer) this.initialize3D();
-                    this.start3DRenderLoop();
-                    if (this.isCalibrated) this.update3DStrikeZone();
-                } else {
-                    this.stop3DRenderLoop();
-                }
-            }
+            // 3D is mandatory now; toggle removed
 
             start3DRenderLoop() {
                 if (!this.renderer) return;
@@ -2343,3 +2327,8 @@
     </script>
 </body>
 </html>
+
+
+
+
+
